@@ -35,7 +35,7 @@ export type MockResult = {
   student_id: string;
   test_id: string;
   score: number;
-  aiFeedback?: string;
+  aiAnalysis?: string;
   submittedAnswers: Record<string, string>;
   submittedAt: number;
 };
@@ -129,7 +129,7 @@ export const mockPreviousResults: MockResult[] = [
     student_id: "s1",
     test_id: "t0",
     score: 90,
-    aiFeedback: "큰 수의 자릿값을 정확히 파악하고 있어요.",
+    aiAnalysis: '{"strength":"큰 수의 자릿값과 읽기를 정확히 이해하고 있습니다.","weakness":"특별한 취약점은 보이지 않으나, 응용 문제에서 실수 가능성이 있습니다.","guidance":"자릿수가 많은 수의 크기 비교 문제를 추가로 풀어보게 하면 좋겠습니다."}',
     submittedAnswers: {},
     submittedAt: Date.UTC(2026, 2, 20, 10, 15),
   },
@@ -138,7 +138,7 @@ export const mockPreviousResults: MockResult[] = [
     student_id: "s2",
     test_id: "t0",
     score: 80,
-    aiFeedback: "큰 수를 읽는 데 익숙하지만, 자릿수 세기가 길면 실수가 생깁니다.",
+    aiAnalysis: '{"strength":"큰 수 읽기의 기본 원리를 이해하고 있습니다.","weakness":"자릿수가 길어질 때 자리 구분에서 실수가 반복됩니다.","guidance":"네 자리씩 끊어 읽는 연습을 반복하고, 수 카드를 활용한 자릿값 게임을 권장합니다."}',
     submittedAnswers: {},
     submittedAt: Date.UTC(2026, 2, 20, 10, 18),
   },
@@ -147,7 +147,7 @@ export const mockPreviousResults: MockResult[] = [
     student_id: "s3",
     test_id: "t0",
     score: 70,
-    aiFeedback: "기본 개념은 이해했으나 큰 수 비교에서 어려움을 보였습니다.",
+    aiAnalysis: '{"strength":"큰 수의 기본 개념(만, 억 단위)을 이해하고 있습니다.","weakness":"큰 수 크기 비교에서 자릿수 판단 오류가 있습니다.","guidance":"수직선 위에 수를 표시하는 활동으로 크기 감각을 기르는 것이 효과적입니다."}',
     submittedAnswers: {},
     submittedAt: Date.UTC(2026, 2, 20, 10, 22),
   },
@@ -159,8 +159,7 @@ export const mockResults: MockResult[] = [
     student_id: "s1",
     test_id: "t1",
     score: 95,
-    aiFeedback:
-      "분수의 크기 비교와 같은 분모 덧셈을 정확히 이해하고 있어요. 다만 서술형에서 문장을 더 구체적으로 설명하면 더 좋아질 거예요.",
+    aiAnalysis: '{"strength":"분수의 크기 비교, 동분모 덧셈/뺄셈을 정확히 이해하고 있습니다.","weakness":"서술형 답안에서 수학적 근거를 구체적으로 기술하는 부분이 부족합니다.","guidance":"왜 그렇게 풀었는지 말로 설명하는 연습을 시키고, 풀이 과정을 글로 쓰는 활동을 권장합니다."}',
     submittedAnswers: {
       q1: "2/4",
       q2: "3/4",
@@ -189,8 +188,7 @@ export const mockResults: MockResult[] = [
     student_id: "s3",
     test_id: "t1",
     score: 88,
-    aiFeedback:
-      "전반적으로 안정적이며 서술형 답안의 논리가 좋습니다. 그림 해석 문제에서 한 번 더 확인하는 습관을 들이면 완벽해질 거예요.",
+    aiAnalysis: '{"strength":"동분모 연산과 서술형 논리 전개가 안정적입니다.","weakness":"그림 해석 문제에서 시각 자료를 꼼꼼히 확인하지 않는 경향이 있습니다.","guidance":"그림/도형 문제에서 조건을 먼저 밑줄 치는 습관을 지도하면 실수를 줄일 수 있습니다."}',
     submittedAnswers: {
       q1: "2/4",
       q2: "3/4",

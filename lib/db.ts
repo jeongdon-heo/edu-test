@@ -2,7 +2,12 @@ import { init, i } from "@instantdb/react";
 
 const APP_ID = process.env.NEXT_PUBLIC_INSTANT_APP_ID ?? "";
 
-export type QuestionType = "multiple_choice" | "short_answer" | "essay";
+export type QuestionType =
+  | "multiple_choice"
+  | "multi_select"
+  | "ox"
+  | "short_answer"
+  | "essay";
 
 const schema = i.schema({
   entities: {
@@ -32,7 +37,7 @@ const schema = i.schema({
       student_id: i.string().indexed(),
       test_id: i.string().indexed(),
       score: i.number(),
-      aiFeedback: i.string().optional(),
+      aiAnalysis: i.string().optional(),
       submittedAnswers: i.json(),
       submittedAt: i.number(),
     }),
