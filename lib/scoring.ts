@@ -1,3 +1,14 @@
+export type AnswerValue =
+  | string
+  | string[]
+  | { process: string; answer: string };
+
+/** Rubric grade for essay (requiresProcess) questions */
+export type RubricGrade = { score: number; feedback: string };
+
+/** Per-question grading result stored in DB */
+export type GradedResultValue = boolean | null | RubricGrade;
+
 export function normalizeAnswer(value: string): string {
   return value.replace(/\s+/g, "").toLowerCase();
 }
@@ -9,7 +20,10 @@ export function isCorrect(student: string, answer: string): boolean {
 }
 
 /** multi_select: compare comma-separated sets (order-independent) */
-export function isMultiSelectCorrect(student: string, answer: string): boolean {
+export function isMultiSelectCorrect(
+  student: string,
+  answer: string
+): boolean {
   const toSet = (v: string) =>
     new Set(
       v
@@ -25,6 +39,95 @@ export function isMultiSelectCorrect(student: string, answer: string): boolean {
   return true;
 }
 
+export function isRubricGrade(v: unknown): v is RubricGrade {
+  return (
+    v !== null &&
+    typeof v === "object" &&
+    "score" in (v as Record<string, unknown>) &&
+    "feedback" in (v as Record<string, unknown>)
+  );
+}
+
+/**
+ * Local (exact-match) answer checker — used as fallback when AI grading
+ * is unavailable and for objective question types.
+ */
+export function checkAnswer(
+  studentAnswer: AnswerValue | undefined,
+  correctAnswer: string,
+  q: {
+    type: string;
+    blankCount?: number | null;
+    subItems?: string[] | null;
+    requiresProcess?: boolean | null;
+  }
+): boolean | null {
+  if (q.type === "essay" && !q.requiresProcess) return null;
+
+  if (q.requiresProcess) {
+    const ans =
+      studentAnswer &&
+      typeof studentAnswer === "object" &&
+      !Array.isArray(studentAnswer)
+        ? studentAnswer.answer
+        : typeof studentAnswer === "string"
+          ? studentAnswer
+          : "";
+    return isCorrect(ans, correctAnswer);
+  }
+
+  if (
+    (q.blankCount && q.blankCount > 1) ||
+    (q.subItems && q.subItems.length > 0)
+  ) {
+    const parts = correctAnswer.split(";;");
+    const studentParts = Array.isArray(studentAnswer)
+      ? studentAnswer
+      : typeof studentAnswer === "string" && studentAnswer
+        ? [studentAnswer]
+        : [];
+    if (studentParts.length === 0) return false;
+    if (parts.length !== studentParts.length) return false;
+    return parts.every((p, i) => isCorrect(studentParts[i] ?? "", p));
+  }
+
+  const saStr =
+    typeof studentAnswer === "string"
+      ? studentAnswer
+      : String(studentAnswer ?? "");
+
+  if (q.type === "multi_select") {
+    return isMultiSelectCorrect(saStr, correctAnswer);
+  }
+
+  return isCorrect(saStr, correctAnswer);
+}
+
+/** Format an AnswerValue for display as a plain string */
+export function formatStudentAnswer(
+  sa: AnswerValue | undefined,
+  q?: { subItems?: string[] | null }
+): string {
+  if (sa === undefined || sa === "") return "";
+  if (typeof sa === "string") return sa;
+  if (Array.isArray(sa)) {
+    if (q?.subItems && q.subItems.length === sa.length) {
+      return sa
+        .map((v, i) => {
+          const label =
+            q.subItems![i].match(/^\(?\d+\)?/)?.[0] ?? `(${i + 1})`;
+          return `${label} ${v}`;
+        })
+        .join(", ");
+    }
+    return sa.join(", ");
+  }
+  if (typeof sa === "object" && "answer" in sa) {
+    return sa.answer || "";
+  }
+  return "";
+}
+
 export type QuestionResult = {
   questionId: string;
   questionNumber: number;
@@ -32,7 +135,10 @@ export type QuestionResult = {
   type: string;
   correctAnswer: string;
   studentAnswer: string;
-  isCorrect: boolean | null; // null = essay (not auto-graded)
+  isCorrect: boolean | null;
+  partialScore?: number; // 0~1 fraction for multi-part questions
+  rubricScore?: number; // 0, 50, or 100 for essay rubric
+  rubricFeedback?: string;
 };
 
 export type GradeResult = {
@@ -41,55 +147,247 @@ export type GradeResult = {
   gradable: number;
   essayCount: number;
   questionResults: QuestionResult[];
+  gradedResults: Record<string, GradedResultValue>;
 };
 
-export function gradeSubmission(
-  questions: Array<{
+type QuestionInput = {
+  id: string;
+  questionNumber: number;
+  questionText: string;
+  type: string;
+  answer: string;
+  blankCount?: number | null;
+  subItems?: string[] | null;
+  requiresProcess?: boolean | null;
+  rubric?: string | null;
+};
+
+/**
+ * Build regular grading items (short_answer without requiresProcess).
+ * requiresProcess items go through essay grading instead.
+ */
+export function buildAIGradeItems(
+  questions: QuestionInput[],
+  answers: Record<string, AnswerValue>
+): Array<{
+  id: string;
+  questionText: string;
+  correctAnswer: string;
+  studentAnswer: string;
+}> {
+  const items: Array<{
     id: string;
-    questionNumber: number;
     questionText: string;
-    type: string;
+    correctAnswer: string;
+    studentAnswer: string;
+  }> = [];
+
+  for (const q of questions) {
+    if (q.type !== "short_answer") continue;
+    if (q.requiresProcess) continue;
+
+    const sa = answers[q.id];
+    const correctAnswer = q.answer ?? "";
+
+    if (
+      (q.blankCount && q.blankCount >= 2) ||
+      (q.subItems && q.subItems.length > 0)
+    ) {
+      const parts = correctAnswer.split(";;");
+      const studentParts = Array.isArray(sa) ? sa : [];
+      const count = q.subItems?.length ?? q.blankCount ?? parts.length;
+      for (let i = 0; i < count; i++) {
+        items.push({
+          id: `${q.id}::${i}`,
+          questionText: q.subItems?.[i] ?? q.questionText,
+          correctAnswer: parts[i] ?? "",
+          studentAnswer: studentParts[i] ?? "",
+        });
+      }
+    } else {
+      items.push({
+        id: q.id,
+        questionText: q.questionText,
+        correctAnswer,
+        studentAnswer: typeof sa === "string" ? sa : "",
+      });
+    }
+  }
+
+  return items;
+}
+
+/**
+ * Build essay grading items for requiresProcess questions.
+ * These include full process + answer for rubric-based grading.
+ */
+export function buildEssayGradeItems(
+  questions: QuestionInput[],
+  answers: Record<string, AnswerValue>
+): Array<{
+  id: string;
+  questionText: string;
+  correctAnswer: string;
+  process: string;
+  answer: string;
+  rubric: string;
+}> {
+  const items: Array<{
+    id: string;
+    questionText: string;
+    correctAnswer: string;
+    process: string;
     answer: string;
-  }>,
-  answers: Record<string, string>
+    rubric: string;
+  }> = [];
+
+  for (const q of questions) {
+    if (!q.requiresProcess) continue;
+
+    const sa = answers[q.id];
+    const process =
+      sa && typeof sa === "object" && !Array.isArray(sa) ? sa.process : "";
+    const answer =
+      sa && typeof sa === "object" && !Array.isArray(sa)
+        ? sa.answer
+        : typeof sa === "string"
+          ? sa
+          : "";
+
+    items.push({
+      id: q.id,
+      questionText: q.questionText,
+      correctAnswer: q.answer ?? "",
+      process,
+      answer,
+      rubric: q.rubric ?? "",
+    });
+  }
+
+  return items;
+}
+
+/**
+ * Grade a submission. Accepts AI results for regular items and
+ * rubric results for essay items.
+ */
+export function gradeSubmission(
+  questions: QuestionInput[],
+  answers: Record<string, AnswerValue>,
+  aiResults?: Map<string, boolean>,
+  essayResults?: Map<string, RubricGrade>
 ): GradeResult {
-  let correct = 0;
+  let correctScore = 0;
   let gradable = 0;
   let essayCount = 0;
   const questionResults: QuestionResult[] = [];
+  const gradedResults: Record<string, GradedResultValue> = {};
 
   for (const q of questions) {
-    const studentAnswer = answers[q.id] ?? "";
-    if (q.type === "essay") {
+    const studentAnswer: AnswerValue | undefined = answers[q.id];
+
+    // Pure essay (no requiresProcess) — not auto-graded
+    if (q.type === "essay" && !q.requiresProcess) {
       essayCount++;
+      gradedResults[q.id] = null;
       questionResults.push({
         questionId: q.id,
         questionNumber: q.questionNumber,
         questionText: q.questionText,
         type: q.type,
         correctAnswer: q.answer ?? "",
-        studentAnswer,
+        studentAnswer: formatStudentAnswer(studentAnswer, q),
         isCorrect: null,
       });
       continue;
     }
+
     gradable++;
-    const correct_ =
-      q.type === "multi_select"
-        ? isMultiSelectCorrect(studentAnswer, q.answer ?? "")
-        : isCorrect(studentAnswer, q.answer ?? "");
-    if (correct_) correct++;
+
+    // --- requiresProcess → rubric grading ---
+    if (q.requiresProcess) {
+      const rubric = essayResults?.get(q.id);
+      if (rubric) {
+        const fraction = rubric.score / 100;
+        correctScore += fraction;
+        gradedResults[q.id] = rubric;
+        questionResults.push({
+          questionId: q.id,
+          questionNumber: q.questionNumber,
+          questionText: q.questionText,
+          type: q.type,
+          correctAnswer: q.answer ?? "",
+          studentAnswer: formatStudentAnswer(studentAnswer, q),
+          isCorrect: rubric.score === 100,
+          partialScore: rubric.score === 50 ? 0.5 : undefined,
+          rubricScore: rubric.score,
+          rubricFeedback: rubric.feedback,
+        });
+        continue;
+      }
+      // Fallback: exact match on answer part
+      const fallback = checkAnswer(studentAnswer, q.answer ?? "", q) ?? false;
+      correctScore += fallback ? 1 : 0;
+      gradedResults[q.id] = fallback;
+      questionResults.push({
+        questionId: q.id,
+        questionNumber: q.questionNumber,
+        questionText: q.questionText,
+        type: q.type,
+        correctAnswer: q.answer ?? "",
+        studentAnswer: formatStudentAnswer(studentAnswer, q),
+        isCorrect: fallback,
+      });
+      continue;
+    }
+
+    // --- Regular questions ---
+    const useAI =
+      aiResults && aiResults.size > 0 && q.type === "short_answer";
+
+    let qCorrect: boolean;
+    let partialScore: number | undefined;
+
+    if (
+      useAI &&
+      ((q.blankCount && q.blankCount >= 2) ||
+        (q.subItems && q.subItems.length > 0))
+    ) {
+      const count = q.subItems?.length ?? q.blankCount ?? 1;
+      let correctParts = 0;
+      for (let i = 0; i < count; i++) {
+        if (aiResults!.get(`${q.id}::${i}`)) correctParts++;
+      }
+      partialScore = correctParts / count;
+      qCorrect = correctParts === count;
+    } else if (useAI) {
+      qCorrect = aiResults!.get(q.id) ?? false;
+    } else {
+      qCorrect = checkAnswer(studentAnswer, q.answer ?? "", q) ?? false;
+    }
+
+    if (partialScore !== undefined) {
+      correctScore += partialScore;
+    } else {
+      correctScore += qCorrect ? 1 : 0;
+    }
+
+    gradedResults[q.id] = qCorrect;
+
     questionResults.push({
       questionId: q.id,
       questionNumber: q.questionNumber,
       questionText: q.questionText,
       type: q.type,
       correctAnswer: q.answer ?? "",
-      studentAnswer,
-      isCorrect: correct_,
+      studentAnswer: formatStudentAnswer(studentAnswer, q),
+      isCorrect: qCorrect,
+      partialScore,
     });
   }
 
-  const score = gradable > 0 ? Math.round((correct / gradable) * 100) : 0;
-  return { score, correct, gradable, essayCount, questionResults };
+  const score =
+    gradable > 0 ? Math.round((correctScore / gradable) * 100) : 0;
+  const correct = questionResults.filter((r) => r.isCorrect === true).length;
+  return { score, correct, gradable, essayCount, questionResults, gradedResults };
 }

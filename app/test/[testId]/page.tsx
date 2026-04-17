@@ -1,10 +1,17 @@
 "use client";
 
-import { use, useEffect, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { id } from "@instantdb/react";
 import { db } from "@/lib/db";
-import { gradeSubmission, type QuestionResult } from "@/lib/scoring";
+import {
+  gradeSubmission,
+  buildAIGradeItems,
+  buildEssayGradeItems,
+  type AnswerValue,
+  type RubricGrade,
+  type QuestionResult,
+} from "@/lib/scoring";
 
 type PageProps = {
   params: Promise<{ testId: string }>;
@@ -30,7 +37,7 @@ export default function TakeTestPage({ params }: PageProps) {
   const { testId } = use(params);
 
   const [studentId, setStudentId] = useState("");
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<SubmitResult | null>(null);
 
@@ -75,15 +82,52 @@ export default function TakeTestPage({ params }: PageProps) {
     if (existingResult) {
       const prev = existingResult.submittedAnswers;
       if (prev && typeof prev === "object" && !Array.isArray(prev)) {
-        setAnswers(prev as Record<string, string>);
+        setAnswers(prev as Record<string, AnswerValue>);
         return;
       }
     }
     setAnswers({});
   }, [studentId, existingResult?.id]);
 
-  const setAnswer = (qId: string, value: string) => {
+  const setAnswer = (qId: string, value: AnswerValue) => {
     setAnswers((prev) => ({ ...prev, [qId]: value }));
+  };
+
+  const setBlankAnswer = (qId: string, index: number, value: string, total: number) => {
+    setAnswers((prev) => {
+      const current = Array.isArray(prev[qId])
+        ? [...(prev[qId] as string[])]
+        : Array(total).fill("");
+      current[index] = value;
+      return { ...prev, [qId]: current };
+    });
+  };
+
+  const setSubItemAnswer = (qId: string, index: number, value: string, total: number) => {
+    setAnswers((prev) => {
+      const current = Array.isArray(prev[qId])
+        ? [...(prev[qId] as string[])]
+        : Array(total).fill("");
+      current[index] = value;
+      return { ...prev, [qId]: current };
+    });
+  };
+
+  const setProcessField = (
+    qId: string,
+    field: "process" | "answer",
+    value: string
+  ) => {
+    setAnswers((prev) => {
+      const current =
+        prev[qId] &&
+        typeof prev[qId] === "object" &&
+        !Array.isArray(prev[qId])
+          ? { ...(prev[qId] as { process: string; answer: string }) }
+          : { process: "", answer: "" };
+      current[field] = value;
+      return { ...prev, [qId]: current };
+    });
   };
 
   const handleSubmit = async () => {
@@ -95,9 +139,55 @@ export default function TakeTestPage({ params }: PageProps) {
 
     setSubmitting(true);
 
-    const grade = gradeSubmission(questions, answers);
-
     try {
+      // 1) Build grading items
+      const aiItems = buildAIGradeItems(questions, answers);
+      const essayItems = buildEssayGradeItems(questions, answers);
+
+      // 2) Call AI grading API
+      let aiResults = new Map<string, boolean>();
+      let essayResults = new Map<string, RubricGrade>();
+
+      if (aiItems.length > 0 || essayItems.length > 0) {
+        try {
+          const apiKey =
+            typeof window !== "undefined"
+              ? localStorage.getItem("ai_api_key") ?? ""
+              : "";
+          const res = await fetch("/api/grade", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(apiKey ? { "x-ai-api-key": apiKey } : {}),
+            },
+            body: JSON.stringify({ items: aiItems, essayItems }),
+          });
+          if (res.ok) {
+            const json = await res.json();
+            for (const r of json.results ?? []) {
+              if (typeof r.id === "string" && typeof r.correct === "boolean") {
+                aiResults.set(r.id, r.correct);
+              }
+            }
+            for (const r of json.essayResults ?? []) {
+              if (typeof r.id === "string" && typeof r.score === "number") {
+                essayResults.set(r.id, {
+                  score: r.score,
+                  feedback: r.feedback ?? "",
+                });
+              }
+            }
+          }
+        } catch {
+          aiResults = new Map();
+          essayResults = new Map();
+        }
+      }
+
+      // 3) Grade with AI + rubric results
+      const grade = gradeSubmission(questions, answers, aiResults, essayResults);
+
+      // 4) Save to DB
       const resultId = existingResult?.id ?? id();
       await db.transact(
         db.tx.results[resultId].update({
@@ -105,6 +195,7 @@ export default function TakeTestPage({ params }: PageProps) {
           test_id: testId,
           score: grade.score,
           submittedAnswers: answers,
+          gradedResults: grade.gradedResults,
           submittedAt: Date.now(),
         })
       );
@@ -200,74 +291,137 @@ export default function TakeTestPage({ params }: PageProps) {
         )}
 
         <ol className="space-y-5">
-          {questions.map((q) => (
-            <li key={q.id} className="rounded-3xl bg-white p-6 shadow-lg">
-              <div className="mb-4 flex items-center gap-3">
-                <span className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-sky-600 text-xl font-bold text-white">
-                  {q.questionNumber}
-                </span>
-                <TypeLabel type={q.type} />
-              </div>
+          {questions.map((q) => {
+            const blankCount = (q.blankCount as number | undefined) ?? null;
+            const subItems = (q.subItems as string[] | undefined) ?? null;
+            const requiresProcess = (q.requiresProcess as boolean | undefined) ?? false;
+            const unit = (q.unit as string | undefined) ?? null;
+            const showCircleKb = needsCircleKeyboard(q);
 
-              {q.materialImage && (
-                <div className="mb-5 overflow-hidden rounded-2xl border-4 border-slate-200 bg-slate-50">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={q.materialImage}
-                    alt={`${q.questionNumber}번 지문/자료`}
-                    className="block w-full"
-                  />
+            return (
+              <li key={q.id} className="rounded-3xl bg-white p-6 shadow-lg">
+                <div className="mb-4 flex items-center gap-3">
+                  <span className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-sky-600 text-xl font-bold text-white">
+                    {q.questionNumber}
+                  </span>
+                  <TypeLabel type={q.type} requiresProcess={requiresProcess} />
                 </div>
-              )}
 
-              <p className="mb-5 text-2xl font-semibold leading-relaxed text-slate-800">
-                {q.questionText}
-              </p>
+                {q.materialImage && (
+                  <div className="mb-5 overflow-hidden rounded-2xl border-4 border-slate-200 bg-slate-50">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={q.materialImage}
+                      alt={`${q.questionNumber}번 지문/자료`}
+                      className="block w-full"
+                    />
+                  </div>
+                )}
 
-              {q.type === "multiple_choice" && (
-                <ChoiceButtons
-                  options={Array.isArray(q.options) ? (q.options as string[]) : []}
-                  value={answers[q.id] ?? ""}
-                  onChange={(v) => setAnswer(q.id, v)}
-                />
-              )}
+                <p className="mb-5 text-2xl font-semibold leading-relaxed text-slate-800">
+                  {q.questionText}
+                </p>
 
-              {q.type === "multi_select" && (
-                <MultiSelectButtons
-                  options={Array.isArray(q.options) ? (q.options as string[]) : []}
-                  value={answers[q.id] ?? ""}
-                  onChange={(v) => setAnswer(q.id, v)}
-                />
-              )}
+                {/* ── 다중 빈칸 ── */}
+                {q.type === "short_answer" && !requiresProcess && blankCount && blankCount >= 2 && !subItems && (
+                  <MultiBlankInput
+                    count={blankCount}
+                    unit={unit}
+                    value={
+                      Array.isArray(answers[q.id])
+                        ? (answers[q.id] as string[])
+                        : Array(blankCount).fill("")
+                    }
+                    onChange={(idx, val) =>
+                      setBlankAnswer(q.id, idx, val, blankCount)
+                    }
+                  />
+                )}
 
-              {q.type === "ox" && (
-                <OXButtons
-                  value={answers[q.id] ?? ""}
-                  onChange={(v) => setAnswer(q.id, v)}
-                />
-              )}
+                {/* ── 소문항 ── */}
+                {q.type === "short_answer" && !requiresProcess && subItems && subItems.length > 0 && (
+                  <SubItemsInput
+                    subItems={subItems}
+                    unit={unit}
+                    value={
+                      Array.isArray(answers[q.id])
+                        ? (answers[q.id] as string[])
+                        : Array(subItems.length).fill("")
+                    }
+                    onChange={(idx, val) =>
+                      setSubItemAnswer(q.id, idx, val, subItems.length)
+                    }
+                  />
+                )}
 
-              {q.type === "short_answer" && (
-                <input
-                  type="text"
-                  value={answers[q.id] ?? ""}
-                  onChange={(e) => setAnswer(q.id, e.target.value)}
-                  placeholder="답을 써보세요"
-                  className="w-full rounded-2xl border-4 border-slate-200 px-6 py-5 text-3xl font-medium text-slate-900 focus:border-sky-500 focus:outline-none"
-                />
-              )}
+                {/* ── 풀이 과정 + 답 (requiresProcess) ── */}
+                {requiresProcess && (
+                  <ProcessAnswerInput
+                    unit={unit}
+                    value={
+                      answers[q.id] &&
+                      typeof answers[q.id] === "object" &&
+                      !Array.isArray(answers[q.id])
+                        ? (answers[q.id] as { process: string; answer: string })
+                        : { process: "", answer: "" }
+                    }
+                    onChangeProcess={(v) => setProcessField(q.id, "process", v)}
+                    onChangeAnswer={(v) => setProcessField(q.id, "answer", v)}
+                  />
+                )}
 
-              {q.type === "essay" && (
-                <textarea
-                  value={answers[q.id] ?? ""}
-                  onChange={(e) => setAnswer(q.id, e.target.value)}
-                  placeholder="생각을 자유롭게 적어보세요"
-                  rows={5}
-                  className="w-full resize-none rounded-2xl border-4 border-slate-200 px-6 py-5 text-xl leading-relaxed text-slate-900 focus:border-sky-500 focus:outline-none"
-                />
-              )}
-            </li>
-          ))}
+                {/* ── 일반 객관식 ── */}
+                {q.type === "multiple_choice" && (
+                  <ChoiceButtons
+                    options={Array.isArray(q.options) ? (q.options as string[]) : []}
+                    value={typeof answers[q.id] === "string" ? (answers[q.id] as string) : ""}
+                    onChange={(v) => setAnswer(q.id, v)}
+                  />
+                )}
+
+                {/* ── 복수 선택 ── */}
+                {q.type === "multi_select" && (
+                  <MultiSelectButtons
+                    options={Array.isArray(q.options) ? (q.options as string[]) : []}
+                    value={typeof answers[q.id] === "string" ? (answers[q.id] as string) : ""}
+                    onChange={(v) => setAnswer(q.id, v)}
+                  />
+                )}
+
+                {/* ── OX ── */}
+                {q.type === "ox" && (
+                  <OXButtons
+                    value={typeof answers[q.id] === "string" ? (answers[q.id] as string) : ""}
+                    onChange={(v) => setAnswer(q.id, v)}
+                  />
+                )}
+
+                {/* ── 일반 단답형 (빈칸 1개, 소문항 없음, requiresProcess 아닌 경우) ── */}
+                {q.type === "short_answer" &&
+                  !requiresProcess &&
+                  (!blankCount || blankCount < 2) &&
+                  (!subItems || subItems.length === 0) && (
+                    <ShortAnswerInput
+                      value={typeof answers[q.id] === "string" ? (answers[q.id] as string) : ""}
+                      onChange={(v) => setAnswer(q.id, v)}
+                      unit={unit}
+                      showCircleKeyboard={showCircleKb}
+                    />
+                  )}
+
+                {/* ── 일반 서술형 (requiresProcess 아닌 경우) ── */}
+                {q.type === "essay" && !requiresProcess && (
+                  <textarea
+                    value={typeof answers[q.id] === "string" ? (answers[q.id] as string) : ""}
+                    onChange={(e) => setAnswer(q.id, e.target.value)}
+                    placeholder="생각을 자유롭게 적어보세요"
+                    rows={5}
+                    className="w-full resize-none rounded-2xl border-4 border-slate-200 px-6 py-5 text-xl leading-relaxed text-slate-900 focus:border-sky-500 focus:outline-none"
+                  />
+                )}
+              </li>
+            );
+          })}
         </ol>
 
         <button
@@ -276,7 +430,7 @@ export default function TakeTestPage({ params }: PageProps) {
           className="mt-8 w-full rounded-3xl bg-sky-600 px-6 py-6 text-3xl font-bold text-white shadow-lg transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting
-            ? "제출 중..."
+            ? "채점 중... 잠시만 기다려 주세요"
             : existingResult
               ? "다시 제출하기 ✅"
               : "제출하기 ✅"}
@@ -286,7 +440,18 @@ export default function TakeTestPage({ params }: PageProps) {
   );
 }
 
-function TypeLabel({ type }: { type: string }) {
+/* ── Helpers ── */
+
+const CIRCLE_CHARS = ["㉠", "㉡", "㉢", "㉣", "㉤", "㉥", "㉦", "㉧", "㉨", "㉩", "㉪", "㉫", "㉬", "㉭"];
+
+function needsCircleKeyboard(q: { questionText: string; answer: string; options?: unknown }): boolean {
+  const text = q.questionText + (q.answer ?? "");
+  return CIRCLE_CHARS.some((c) => text.includes(c));
+}
+
+/* ── Sub-components ── */
+
+function TypeLabel({ type, requiresProcess }: { type: string; requiresProcess?: boolean }) {
   const map: Record<string, { label: string; cls: string }> = {
     multiple_choice: { label: "객관식", cls: "bg-sky-100 text-sky-800" },
     multi_select: { label: "복수 선택", cls: "bg-indigo-100 text-indigo-800" },
@@ -300,8 +465,250 @@ function TypeLabel({ type }: { type: string }) {
   };
   return (
     <span className={`rounded-full px-3 py-1 text-sm font-semibold ${cls}`}>
-      {label}
+      {requiresProcess ? `${label} (풀이+답)` : label}
     </span>
+  );
+}
+
+/* ── 원문자 입력 툴바 ── */
+function CircleCharToolbar({ onInsert }: { onInsert: (ch: string) => void }) {
+  return (
+    <div className="mb-3 flex flex-wrap gap-2">
+      {CIRCLE_CHARS.slice(0, 6).map((ch) => (
+        <button
+          key={ch}
+          type="button"
+          onClick={() => onInsert(ch)}
+          className="flex h-12 w-12 items-center justify-center rounded-xl border-2 border-teal-200 bg-teal-50 text-xl font-bold text-teal-800 transition active:scale-95 active:bg-teal-100"
+        >
+          {ch}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ── 일반 단답형 입력 (원문자 키보드 + 단위 표시) ── */
+function ShortAnswerInput({
+  value,
+  onChange,
+  unit,
+  showCircleKeyboard,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  unit?: string | null;
+  showCircleKeyboard?: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const insertChar = (ch: string) => {
+    const el = inputRef.current;
+    if (!el) { onChange(value + ch); return; }
+    const start = el.selectionStart ?? value.length;
+    const end = el.selectionEnd ?? value.length;
+    const next = value.substring(0, start) + ch + value.substring(end);
+    onChange(next);
+    requestAnimationFrame(() => {
+      el.selectionStart = el.selectionEnd = start + ch.length;
+      el.focus();
+    });
+  };
+
+  return (
+    <div>
+      {showCircleKeyboard && <CircleCharToolbar onInsert={insertChar} />}
+      <div className="flex items-center gap-3">
+        <input
+          ref={inputRef}
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="답을 써보세요"
+          className="min-w-0 flex-1 rounded-2xl border-4 border-slate-200 px-6 py-5 text-3xl font-medium text-slate-900 focus:border-sky-500 focus:outline-none"
+        />
+        {unit && (
+          <span className="flex-none text-3xl font-bold text-slate-500">
+            {unit}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── 다중 빈칸 입력 ── */
+const CIRCLED_NUMS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
+
+function MultiBlankInput({
+  count,
+  value,
+  onChange,
+  unit,
+}: {
+  count: number;
+  value: string[];
+  onChange: (index: number, val: string) => void;
+  unit?: string | null;
+}) {
+  return (
+    <div>
+      <p className="mb-3 rounded-lg bg-sky-50 px-4 py-2.5 text-sm font-bold text-sky-700">
+        ※ 위에서 아래로, 왼쪽에서 오른쪽 순서대로 빈칸을 채워주세요.
+      </p>
+      <div className="space-y-3">
+        {Array.from({ length: count }).map((_, i) => (
+          <div key={i} className="flex items-center gap-3">
+            <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-sky-600 text-lg font-bold text-white">
+              {CIRCLED_NUMS[i] ?? i + 1}
+            </span>
+            <div className="flex flex-1 items-center gap-2">
+              <input
+                type="text"
+                value={value[i] ?? ""}
+                onChange={(e) => onChange(i, e.target.value)}
+                placeholder={`${CIRCLED_NUMS[i] ?? i + 1}번째 빈칸`}
+                className="min-w-0 flex-1 rounded-xl border-4 border-slate-200 px-4 py-4 text-center text-2xl font-medium text-slate-900 focus:border-sky-500 focus:outline-none"
+              />
+              {unit && i === count - 1 && (
+                <span className="flex-none text-2xl font-bold text-slate-500">
+                  {unit}
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── 소문항 입력 ── */
+function SubItemsInput({
+  subItems,
+  value,
+  onChange,
+  unit,
+}: {
+  subItems: string[];
+  value: string[];
+  onChange: (index: number, val: string) => void;
+  unit?: string | null;
+}) {
+  return (
+    <div className="space-y-4">
+      {subItems.map((label, i) => (
+        <div key={i}>
+          <p className="mb-2 text-lg font-semibold text-slate-700">{label}</p>
+          <div className="flex items-center gap-3">
+            <input
+              type="text"
+              value={value[i] ?? ""}
+              onChange={(e) => onChange(i, e.target.value)}
+              placeholder="답을 써보세요"
+              className="min-w-0 flex-1 rounded-xl border-4 border-slate-200 px-5 py-4 text-2xl font-medium text-slate-900 focus:border-sky-500 focus:outline-none"
+            />
+            {unit && (
+              <span className="flex-none text-2xl font-bold text-slate-500">
+                {unit}
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── 풀이 과정 + 답 입력 (수학 기호 툴바 포함) ── */
+const MATH_SYMBOLS = [
+  { label: "+", value: "+" },
+  { label: "-", value: "-" },
+  { label: "×", value: "×" },
+  { label: "÷", value: "÷" },
+  { label: "=", value: "=" },
+];
+
+function ProcessAnswerInput({
+  value,
+  onChangeProcess,
+  onChangeAnswer,
+  unit,
+}: {
+  value: { process: string; answer: string };
+  onChangeProcess: (v: string) => void;
+  onChangeAnswer: (v: string) => void;
+  unit?: string | null;
+}) {
+  const processRef = useRef<HTMLTextAreaElement>(null);
+
+  const insertSymbol = (symbol: string) => {
+    const ta = processRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const newValue =
+      value.process.substring(0, start) +
+      symbol +
+      value.process.substring(end);
+    onChangeProcess(newValue);
+    requestAnimationFrame(() => {
+      ta.selectionStart = ta.selectionEnd = start + symbol.length;
+      ta.focus();
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* 풀이 과정 */}
+      <div>
+        <label className="mb-2 block text-base font-bold text-violet-700">
+          풀이 과정
+        </label>
+        {/* 수학 기호 입력 툴바 */}
+        <div className="mb-2 flex gap-2">
+          {MATH_SYMBOLS.map((s) => (
+            <button
+              key={s.value}
+              type="button"
+              onClick={() => insertSymbol(s.value)}
+              className="flex h-12 w-12 items-center justify-center rounded-xl border-2 border-violet-200 bg-violet-50 text-2xl font-bold text-violet-700 transition active:scale-95 active:bg-violet-100"
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <textarea
+          ref={processRef}
+          value={value.process}
+          onChange={(e) => onChangeProcess(e.target.value)}
+          placeholder="풀이 과정을 써보세요"
+          rows={6}
+          className="w-full resize-none rounded-2xl border-4 border-violet-200 px-6 py-5 text-xl leading-relaxed text-slate-900 focus:border-violet-500 focus:outline-none"
+        />
+      </div>
+
+      {/* 답 */}
+      <div>
+        <label className="mb-2 block text-base font-bold text-sky-700">
+          답
+        </label>
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            value={value.answer}
+            onChange={(e) => onChangeAnswer(e.target.value)}
+            placeholder="답을 써보세요"
+            className="min-w-0 flex-1 rounded-2xl border-4 border-sky-200 px-6 py-5 text-3xl font-medium text-slate-900 focus:border-sky-500 focus:outline-none"
+          />
+          {unit && (
+            <span className="flex-none text-3xl font-bold text-slate-500">
+              {unit}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -468,57 +875,88 @@ function ResultView({ result }: { result: SubmitResult }) {
           문항별 결과
         </h2>
         <ol className="space-y-3">
-          {result.questionResults.map((qr) => (
-            <li
-              key={qr.questionId}
-              className={`rounded-2xl border-4 p-5 ${
-                qr.isCorrect === null
-                  ? "border-slate-200 bg-slate-50"
-                  : qr.isCorrect
-                    ? "border-emerald-200 bg-emerald-50"
-                    : "border-rose-200 bg-rose-50"
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                <span
-                  className={`mt-0.5 flex h-10 w-10 flex-none items-center justify-center rounded-full text-lg font-bold text-white ${
-                    qr.isCorrect === null
-                      ? "bg-slate-400"
+          {result.questionResults.map((qr) => {
+            const hasPartial =
+              qr.partialScore !== undefined &&
+              qr.partialScore > 0 &&
+              !qr.isCorrect;
+            const borderCls =
+              qr.isCorrect === null
+                ? "border-slate-200 bg-slate-50"
+                : qr.isCorrect
+                  ? "border-emerald-200 bg-emerald-50"
+                  : hasPartial
+                    ? "border-amber-200 bg-amber-50"
+                    : "border-rose-200 bg-rose-50";
+            const badgeCls =
+              qr.isCorrect === null
+                ? "bg-slate-400"
+                : qr.isCorrect
+                  ? "bg-emerald-500"
+                  : hasPartial
+                    ? "bg-amber-500"
+                    : "bg-rose-500";
+            return (
+              <li
+                key={qr.questionId}
+                className={`rounded-2xl border-4 p-5 ${borderCls}`}
+              >
+                <div className="flex items-start gap-3">
+                  <span
+                    className={`mt-0.5 flex h-10 w-10 flex-none items-center justify-center rounded-full text-lg font-bold text-white ${badgeCls}`}
+                  >
+                    {qr.isCorrect === null
+                      ? qr.questionNumber
                       : qr.isCorrect
-                        ? "bg-emerald-500"
-                        : "bg-rose-500"
-                  }`}
-                >
-                  {qr.isCorrect === null
-                    ? qr.questionNumber
-                    : qr.isCorrect
-                      ? "O"
-                      : "X"}
-                </span>
-                <div className="flex-1">
-                  <p className="text-lg font-semibold text-slate-800">
-                    {qr.questionNumber}번. {qr.questionText}
-                  </p>
-                  <div className="mt-2 space-y-1 text-base">
-                    <p className="text-slate-600">
-                      <span className="font-medium">내 답:</span>{" "}
-                      {qr.studentAnswer || "(미응답)"}
-                    </p>
-                    {qr.isCorrect === false && (
-                      <p className="font-medium text-emerald-700">
-                        정답: {qr.correctAnswer}
+                        ? "O"
+                        : hasPartial
+                          ? "△"
+                          : "X"}
+                  </span>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="text-lg font-semibold text-slate-800">
+                        {qr.questionNumber}번. {qr.questionText}
                       </p>
-                    )}
-                    {qr.isCorrect === null && (
-                      <p className="text-sm text-slate-500">
-                        서술형 - 선생님이 채점해요
+                      {hasPartial && (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                          부분 정답 ({Math.round(qr.partialScore! * 100)}%)
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-2 space-y-1 text-base">
+                      <p className="text-slate-600">
+                        <span className="font-medium">내 답:</span>{" "}
+                        {qr.studentAnswer || "(미응답)"}
                       </p>
-                    )}
+                      {qr.rubricScore !== undefined && (
+                        <div className="mt-1 rounded-lg bg-violet-50 p-2.5">
+                          <p className="text-sm font-semibold text-violet-700">
+                            AI 채점: {qr.rubricScore}점
+                          </p>
+                          {qr.rubricFeedback && (
+                            <p className="mt-0.5 text-sm text-violet-600">
+                              {qr.rubricFeedback}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      {qr.isCorrect === false && !qr.rubricScore && (
+                        <p className="font-medium text-emerald-700">
+                          정답: {qr.correctAnswer}
+                        </p>
+                      )}
+                      {qr.isCorrect === null && (
+                        <p className="text-sm text-slate-500">
+                          서술형 - 선생님이 채점해요
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ol>
 
         <div className="mt-8 text-center">

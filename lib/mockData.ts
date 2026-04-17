@@ -28,6 +28,11 @@ export type MockQuestion = {
   answer: string;
   explanation: string;
   materialImage?: string;
+  blankCount?: number;
+  subItems?: string[];
+  requiresProcess?: boolean;
+  unit?: string;
+  rubric?: string;
 };
 
 export type MockResult = {
@@ -37,6 +42,7 @@ export type MockResult = {
   score: number;
   aiAnalysis?: string;
   submittedAnswers: Record<string, string>;
+  gradedResults?: Record<string, boolean | null>;
   submittedAt: number;
 };
 
