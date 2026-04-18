@@ -413,9 +413,31 @@ export default function TeacherDashboardPage() {
     <main className="min-h-screen bg-slate-50 p-6 lg:p-8">
       <div className="mx-auto max-w-7xl">
         {/* Header */}
-        <header className="mb-8">
-          <h1 className="text-3xl font-bold text-slate-900">교사 대시보드</h1>
-          <p className="mt-1 text-slate-500">학급의 누적 시험 데이터를 한눈에 확인하세요.</p>
+        <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">교사 대시보드</h1>
+            <p className="mt-1 text-slate-500">학급의 누적 시험 데이터를 한눈에 확인하세요.</p>
+          </div>
+          <nav className="flex flex-wrap gap-2">
+            <Link
+              href="/teacher/upload"
+              className="inline-flex items-center gap-1.5 rounded-xl border-2 border-sky-500 bg-sky-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-600"
+            >
+              📤 시험지 업로드
+            </Link>
+            <Link
+              href="/teacher/students"
+              className="inline-flex items-center gap-1.5 rounded-xl border-2 border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            >
+              👥 학생 명단
+            </Link>
+            <Link
+              href="/teacher/settings"
+              className="inline-flex items-center gap-1.5 rounded-xl border-2 border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            >
+              ⚙️ 설정
+            </Link>
+          </nav>
         </header>
 
         {/* ═══ Section 1: Growth Trend Chart ═══ */}

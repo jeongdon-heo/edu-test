@@ -89,7 +89,13 @@ export default function SettingsPage() {
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-2xl">
         <header className="mb-6">
-          <h1 className="text-3xl font-bold text-slate-900">AI 설정</h1>
+          <Link
+            href="/teacher"
+            className="text-xs font-medium text-slate-500 hover:text-slate-700"
+          >
+            ← 대시보드로
+          </Link>
+          <h1 className="mt-1 text-3xl font-bold text-slate-900">AI 설정</h1>
           <p className="mt-1 text-slate-600">
             사용할 AI 모델과 본인의 API 키를 등록하세요. 키는 이 브라우저의 localStorage에만 저장되고, 분석 요청 시에만 서버로 전송됩니다.
           </p>

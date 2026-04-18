@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { id } from "@instantdb/react";
@@ -522,7 +523,13 @@ export default function UploadPdfPage() {
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-3xl">
         <header className="mb-6">
-          <h1 className="text-3xl font-bold text-slate-900">
+          <Link
+            href="/teacher"
+            className="text-xs font-medium text-slate-500 hover:text-slate-700"
+          >
+            ← 대시보드로
+          </Link>
+          <h1 className="mt-1 text-3xl font-bold text-slate-900">
             시험지 PDF 분석
           </h1>
           <p className="mt-1 text-slate-600">

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { id } from "@instantdb/react";
 import { db } from "@/lib/db";
@@ -108,7 +109,13 @@ export default function StudentsPage() {
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-3xl">
         <header className="mb-6">
-          <h1 className="text-3xl font-bold text-slate-900">학생 관리</h1>
+          <Link
+            href="/teacher"
+            className="text-xs font-medium text-slate-500 hover:text-slate-700"
+          >
+            ← 대시보드로
+          </Link>
+          <h1 className="mt-1 text-3xl font-bold text-slate-900">학생 관리</h1>
           <p className="mt-1 text-slate-600">
             내 반 학생 명단을 관리하세요. 현재 등록된 학생 {students.length}명.
           </p>
