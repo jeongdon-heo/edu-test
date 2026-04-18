@@ -40,12 +40,23 @@ const schema = i.schema({
     }),
     results: i.entity({
       student_id: i.string().indexed(),
+      student_name: i.string().optional(),
       test_id: i.string().indexed(),
       score: i.number(),
       aiAnalysis: i.string().optional(),
       submittedAnswers: i.json(),
       gradedResults: i.json().optional(),
       submittedAt: i.number(),
+    }),
+    submissions: i.entity({
+      student_id: i.string().indexed(),
+      student_name: i.string().optional(),
+      test_id: i.string().indexed(),
+      currentQuestionIndex: i.number(),
+      totalQuestions: i.number(),
+      status: i.string(), // "in_progress" | "submitted"
+      startedAt: i.number(),
+      lastActiveAt: i.number().indexed(),
     }),
   },
 });

@@ -38,6 +38,7 @@ export type MockQuestion = {
 export type MockResult = {
   id: string;
   student_id: string;
+  student_name?: string;
   test_id: string;
   score: number;
   aiAnalysis?: string;
@@ -50,6 +51,34 @@ export const mockStudents: MockStudent[] = [
   { id: "s1", name: "김민지", studentNumber: 1, teacher_id: MOCK_TEACHER_ID },
   { id: "s2", name: "이준호", studentNumber: 2, teacher_id: MOCK_TEACHER_ID },
   { id: "s3", name: "박서연", studentNumber: 3, teacher_id: MOCK_TEACHER_ID },
+];
+
+/**
+ * 20-student demo roster used on the root sign-in screen when the DB has
+ * no real students registered yet. Once a teacher seeds a real class via
+ * /teacher/students, those records take precedence and this list falls away.
+ */
+export const demoClassStudents: MockStudent[] = [
+  { id: "demo-1", name: "권주아", studentNumber: 1, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-2", name: "김서준", studentNumber: 2, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-3", name: "김도윤", studentNumber: 3, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-4", name: "김지후", studentNumber: 4, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-5", name: "나예준", studentNumber: 5, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-6", name: "문시우", studentNumber: 6, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-7", name: "박하준", studentNumber: 7, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-8", name: "배주원", studentNumber: 8, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-9", name: "서은우", studentNumber: 9, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-10", name: "신지호", studentNumber: 10, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-11", name: "오서아", studentNumber: 11, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-12", name: "유하은", studentNumber: 12, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-13", name: "이서윤", studentNumber: 13, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-14", name: "임지아", studentNumber: 14, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-15", name: "장수호", studentNumber: 15, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-16", name: "정다은", studentNumber: 16, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-17", name: "조현우", studentNumber: 17, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-18", name: "최예린", studentNumber: 18, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-19", name: "한소율", studentNumber: 19, teacher_id: MOCK_TEACHER_ID },
+  { id: "demo-20", name: "황민재", studentNumber: 20, teacher_id: MOCK_TEACHER_ID },
 ];
 
 export const mockPreviousTest: MockTest = {

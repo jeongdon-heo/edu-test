@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 import {
   LineChart,
   Line,
@@ -72,16 +74,16 @@ export default function TeacherDashboardPage() {
 
   const remoteStudents = (scopedQuery.data?.students ?? []) as MockStudent[];
   const remoteTests = (scopedQuery.data?.tests ?? []) as MockTest[];
-  const studentIds = remoteStudents.map((s) => s.id);
   const testIds = remoteTests.map((t) => t.id);
 
+  // Fetch results by test_id (not student_id) so submissions from demo
+  // students — whose student_id never appears in the `students` entity —
+  // still show up during the test phase.
   const linkedQuery = db.useQuery({
     results: {
       $: {
         where: {
-          student_id: {
-            $in: studentIds.length > 0 ? studentIds : ["__none__"],
-          },
+          test_id: { $in: testIds.length > 0 ? testIds : ["__none__"] },
         },
       },
     },
@@ -98,7 +100,26 @@ export default function TeacherDashboardPage() {
   const remoteQuestions = (linkedQuery.data?.questions ?? []) as MockQuestion[];
 
   const hasRemote = remoteStudents.length > 0 || remoteTests.length > 0;
-  const students = hasRemote ? remoteStudents : mockStudents;
+
+  // Merge real students with synthesized entries for any result whose
+  // student_id isn't in the registered roster (e.g. demo-* logins).
+  const mergedRemoteStudents = useMemo<MockStudent[]>(() => {
+    const existing = new Map(remoteStudents.map((s) => [s.id, s]));
+    for (const r of remoteResults) {
+      if (!r.student_id || existing.has(r.student_id)) continue;
+      const numMatch = r.student_id.match(/(\d+)$/);
+      const parsedNumber = numMatch ? parseInt(numMatch[1], 10) : NaN;
+      existing.set(r.student_id, {
+        id: r.student_id,
+        name: r.student_name || "이름 미확인",
+        studentNumber: Number.isFinite(parsedNumber) ? parsedNumber : 999,
+        teacher_id: teacherScope,
+      });
+    }
+    return Array.from(existing.values());
+  }, [remoteStudents, remoteResults, teacherScope]);
+
+  const students = hasRemote ? mergedRemoteStudents : mockStudents;
   const allTests = useMemo(
     () =>
       [...(hasRemote ? remoteTests : [mockPreviousTest, mockTest])].sort(
@@ -250,6 +271,50 @@ export default function TeacherDashboardPage() {
       return entry;
     });
   }, [allTests, allResults, trackedStudentId]);
+
+  /* ── Excel export ── */
+  const handleExportExcel = () => {
+    if (!currentTest || rows.length === 0) return;
+
+    const hasAnalysis = rows.some((r) => r.result.aiAnalysis);
+    const header = hasAnalysis
+      ? ["번호", "이름", "총점", "제출 일시", "AI 서술형 피드백"]
+      : ["번호", "이름", "총점", "제출 일시"];
+
+    const body = [...rows]
+      .sort((a, b) => a.student.studentNumber - b.student.studentNumber)
+      .map((r) => {
+        const base = [
+          r.student.studentNumber,
+          r.student.name,
+          r.result.score,
+          formatDate(r.result.submittedAt),
+        ];
+        return hasAnalysis ? [...base, r.result.aiAnalysis ?? ""] : base;
+      });
+
+    const sheet = XLSX.utils.aoa_to_sheet([header, ...body]);
+    sheet["!cols"] = [
+      { wch: 6 },
+      { wch: 12 },
+      { wch: 8 },
+      { wch: 18 },
+      ...(hasAnalysis ? [{ wch: 60 }] : []),
+    ];
+
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, "성적");
+
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const now = new Date();
+    const datePart =
+      now.getFullYear().toString() +
+      pad(now.getMonth() + 1) +
+      pad(now.getDate());
+    const safeTitle = currentTest.title.replace(/[\\/:*?"<>|]/g, "_");
+    const filename = `${safeTitle}_우리반성적_${datePart}.xlsx`;
+    XLSX.writeFile(book, filename);
+  };
 
   /* ── AI generate all ── */
   const handleGenerateAll = async () => {
@@ -473,17 +538,34 @@ export default function TeacherDashboardPage() {
                   {currentTest.subject} · {formatDate(currentTest.createdAt)}
                 </p>
               </div>
-              <button
-                onClick={handleGenerateAll}
-                disabled={generating || missingAnalysisCount === 0}
-                className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {generating
-                  ? "AI 학습 분석 생성 중..."
-                  : missingAnalysisCount > 0
-                    ? "AI 학습 분석 (" + missingAnalysisCount + "명)"
-                    : "학습 분석 완료"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  href={`/teacher/live/${currentTest.id}`}
+                  className="inline-flex items-center gap-1.5 rounded-xl border-2 border-rose-500 bg-rose-50 px-5 py-2.5 text-sm font-semibold text-rose-700 shadow transition hover:bg-rose-100"
+                >
+                  <span className="flex h-2 w-2 animate-pulse rounded-full bg-rose-500" />
+                  실시간 모니터링
+                </Link>
+                <button
+                  type="button"
+                  onClick={handleExportExcel}
+                  disabled={rows.length === 0}
+                  className="rounded-xl border-2 border-emerald-600 bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white shadow transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  📥 성적 엑셀 다운로드
+                </button>
+                <button
+                  onClick={handleGenerateAll}
+                  disabled={generating || missingAnalysisCount === 0}
+                  className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {generating
+                    ? "AI 학습 분석 생성 중..."
+                    : missingAnalysisCount > 0
+                      ? "AI 학습 분석 (" + missingAnalysisCount + "명)"
+                      : "학습 분석 완료"}
+                </button>
+              </div>
             </div>
 
             {/* Stats row */}
