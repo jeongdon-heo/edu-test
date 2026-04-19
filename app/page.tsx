@@ -6,11 +6,20 @@ import { useMemo } from "react";
 import { db } from "@/lib/db";
 import { demoClassStudents } from "@/lib/mockData";
 import { setLoggedInStudent } from "@/lib/studentLogin";
+import { useTeacherSession } from "@/lib/teacherAuth";
 
 type NameTagStudent = {
   id: string;
   name: string;
   studentNumber: number;
+};
+
+type TeacherRow = { id: string; createdAt?: number };
+type StudentRow = {
+  id: string;
+  name?: string;
+  studentNumber?: number;
+  teacher_id?: string;
 };
 
 const BADGE_COLORS = [
@@ -24,48 +33,66 @@ const BADGE_COLORS = [
 
 export default function Home() {
   const router = useRouter();
+  const session = useTeacherSession();
 
-  // Pick the most recently created teacher as the active classroom.
-  // Single-teacher deployments resolve unambiguously; if multiple teachers
-  // exist the newest one wins.
   const teachersQuery = db.useQuery({ teachers: {} });
+  const studentsQuery = db.useQuery({ students: {} });
+
   const activeTeacherId = useMemo(() => {
-    const teachers = (teachersQuery.data?.teachers ?? []) as Array<{
-      id: string;
-      createdAt?: number;
-    }>;
+    const teachers = (teachersQuery.data?.teachers ?? []) as TeacherRow[];
+    const allStudents = (studentsQuery.data?.students ?? []) as StudentRow[];
     if (teachers.length === 0) return null;
-    return [...teachers].sort(
-      (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)
-    )[0].id;
-  }, [teachersQuery.data]);
+    const teacherIds = new Set(teachers.map((t) => t.id));
 
-  const studentsQuery = db.useQuery({
-    students: {
-      $: { where: { teacher_id: activeTeacherId ?? "__none__" } },
-    },
-  });
-  const isLoading = teachersQuery.isLoading || studentsQuery.isLoading;
+    // 1) Prefer the logged-in teacher if they're still in the teachers table.
+    if (session?.teacherId && teacherIds.has(session.teacherId)) {
+      return session.teacherId;
+    }
 
-  const students = useMemo<NameTagStudent[]>(() => {
-    const fromDb = (studentsQuery.data?.students ?? [])
+    // 2) Pick the teacher with the most registered students.
+    const counts = new Map<string, number>();
+    for (const s of allStudents) {
+      const tid = s.teacher_id;
+      if (tid && teacherIds.has(tid)) {
+        counts.set(tid, (counts.get(tid) ?? 0) + 1);
+      }
+    }
+
+    const ranked = [...teachers].sort((a, b) => {
+      const countDiff = (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0);
+      if (countDiff !== 0) return countDiff;
+      // 3) Tiebreak — newest teacher wins.
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
+
+    return ranked[0].id;
+  }, [teachersQuery.data, studentsQuery.data, session]);
+
+  const classRoster = useMemo<NameTagStudent[]>(() => {
+    if (!activeTeacherId) return [];
+    const allStudents = (studentsQuery.data?.students ?? []) as StudentRow[];
+    return allStudents
       .filter(
-        (s): s is typeof s & { name: string; studentNumber: number } =>
-          typeof s.name === "string" && typeof s.studentNumber === "number"
+        (s): s is StudentRow & { name: string; studentNumber: number } =>
+          s.teacher_id === activeTeacherId &&
+          typeof s.name === "string" &&
+          typeof s.studentNumber === "number"
       )
       .map((s) => ({
         id: s.id,
         name: s.name,
         studentNumber: s.studentNumber,
-      }));
-    const list = fromDb.length > 0 ? fromDb : demoClassStudents;
-    return [...list].sort(
-      (a, b) => (a.studentNumber ?? 0) - (b.studentNumber ?? 0)
-    );
-  }, [studentsQuery.data]);
+      }))
+      .sort((a, b) => a.studentNumber - b.studentNumber);
+  }, [studentsQuery.data, activeTeacherId]);
 
-  const showingDemo =
-    !isLoading && (studentsQuery.data?.students?.length ?? 0) === 0;
+  const isLoading = teachersQuery.isLoading || studentsQuery.isLoading;
+  const hasRealRoster = classRoster.length > 0;
+  const showingDemo = !isLoading && !hasRealRoster;
+
+  const students: NameTagStudent[] = hasRealRoster
+    ? classRoster
+    : [...demoClassStudents].sort((a, b) => a.studentNumber - b.studentNumber);
 
   const handleLogin = (student: NameTagStudent) => {
     setLoggedInStudent(student);
