@@ -71,8 +71,11 @@ export function reconstructResult(params: {
     gradable++;
 
     if (isRubricGrade(stored)) {
-      if (stored.score === 100) correct += 1;
-      else if (stored.score === 50) correct += 0.5;
+      // Unified handling for rubric (0/50/100) and continuous pure-essay
+      // (0~100) scores. Treat >=80 as correct, fractional otherwise.
+      correct += stored.score / 100;
+      const right = stored.score >= 80;
+      const fraction = stored.score / 100;
       questionResults.push({
         questionId: q.id,
         questionNumber: q.questionNumber,
@@ -80,8 +83,8 @@ export function reconstructResult(params: {
         type: q.type,
         correctAnswer: q.answer ?? "",
         studentAnswer,
-        isCorrect: stored.score === 100,
-        partialScore: stored.score === 50 ? 0.5 : undefined,
+        isCorrect: right,
+        partialScore: !right && stored.score > 0 ? fraction : undefined,
         rubricScore: stored.score,
         rubricFeedback: stored.feedback,
       });

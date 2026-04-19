@@ -9,7 +9,9 @@ import {
   gradeSubmission,
   buildAIGradeItems,
   buildEssayGradeItems,
+  buildPureEssayGradeItems,
   type AnswerValue,
+  type PureEssayGrade,
   type RubricGrade,
 } from "@/lib/scoring";
 import { clearLoggedInStudent, useLoggedInStudent } from "@/lib/studentLogin";
@@ -239,49 +241,92 @@ export default function TakeTestPage({ params }: PageProps) {
       // 1) Build grading items
       const aiItems = buildAIGradeItems(questions, answers);
       const essayItems = buildEssayGradeItems(questions, answers);
+      const pureEssayItems = buildPureEssayGradeItems(questions, answers);
 
-      // 2) Call AI grading API
+      // 2) Call AI grading APIs (regular + rubric essays together,
+      //    pure-essay on the dedicated endpoint) in parallel.
       let aiResults = new Map<string, boolean>();
       let essayResults = new Map<string, RubricGrade>();
+      let pureEssayResults = new Map<string, PureEssayGrade>();
 
-      if (aiItems.length > 0 || essayItems.length > 0) {
-        try {
-          const apiKey =
-            typeof window !== "undefined"
-              ? localStorage.getItem("ai_api_key") ?? ""
-              : "";
-          const res = await fetch("/api/grade", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(apiKey ? { "x-ai-api-key": apiKey } : {}),
-            },
-            body: JSON.stringify({ items: aiItems, essayItems }),
-          });
-          if (res.ok) {
-            const json = await res.json();
-            for (const r of json.results ?? []) {
-              if (typeof r.id === "string" && typeof r.correct === "boolean") {
-                aiResults.set(r.id, r.correct);
-              }
-            }
-            for (const r of json.essayResults ?? []) {
-              if (typeof r.id === "string" && typeof r.score === "number") {
-                essayResults.set(r.id, {
-                  score: r.score,
-                  feedback: r.feedback ?? "",
-                });
-              }
-            }
+      const apiKey =
+        typeof window !== "undefined"
+          ? localStorage.getItem("ai_api_key") ?? ""
+          : "";
+      const buildHeaders = (): Record<string, string> => {
+        const h: Record<string, string> = { "Content-Type": "application/json" };
+        if (apiKey) h["x-ai-api-key"] = apiKey;
+        return h;
+      };
+
+      const gradeCall =
+        aiItems.length > 0 || essayItems.length > 0
+          ? fetch("/api/grade", {
+              method: "POST",
+              headers: buildHeaders(),
+              body: JSON.stringify({ items: aiItems, essayItems }),
+            })
+              .then((r) => (r.ok ? r.json() : null))
+              .catch(() => null)
+          : Promise.resolve(null);
+
+      const pureEssayCall =
+        pureEssayItems.length > 0
+          ? fetch("/api/grade-essay", {
+              method: "POST",
+              headers: buildHeaders(),
+              body: JSON.stringify({ items: pureEssayItems }),
+            })
+              .then((r) => (r.ok ? r.json() : null))
+              .catch(() => null)
+          : Promise.resolve(null);
+
+      const [gradeJson, pureEssayJson] = await Promise.all([
+        gradeCall,
+        pureEssayCall,
+      ]);
+
+      if (gradeJson) {
+        for (const r of gradeJson.results ?? []) {
+          if (typeof r.id === "string" && typeof r.correct === "boolean") {
+            aiResults.set(r.id, r.correct);
           }
-        } catch {
-          aiResults = new Map();
-          essayResults = new Map();
         }
+        for (const r of gradeJson.essayResults ?? []) {
+          if (typeof r.id === "string" && typeof r.score === "number") {
+            essayResults.set(r.id, {
+              score: r.score,
+              feedback: r.feedback ?? "",
+            });
+          }
+        }
+      } else if (aiItems.length > 0 || essayItems.length > 0) {
+        aiResults = new Map();
+        essayResults = new Map();
       }
 
-      // 3) Grade with AI + rubric results
-      const grade = gradeSubmission(questions, answers, aiResults, essayResults);
+      if (pureEssayJson) {
+        for (const r of pureEssayJson.results ?? []) {
+          if (typeof r.id === "string" && typeof r.score === "number") {
+            pureEssayResults.set(r.id, {
+              score: r.score,
+              feedback: r.feedback ?? "",
+              isCorrect: r.isCorrect === true,
+            });
+          }
+        }
+      } else if (pureEssayItems.length > 0) {
+        pureEssayResults = new Map();
+      }
+
+      // 3) Grade with AI + rubric + pure-essay results
+      const grade = gradeSubmission(
+        questions,
+        answers,
+        aiResults,
+        essayResults,
+        pureEssayResults
+      );
 
       // 4) Save to DB (result + submission status)
       const resultId = existingResult?.id ?? id();

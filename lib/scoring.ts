@@ -160,6 +160,15 @@ type QuestionInput = {
   subItems?: string[] | null;
   requiresProcess?: boolean | null;
   rubric?: string | null;
+  explanation?: string | null;
+};
+
+/** Pure-essay AI grade (type="essay" without requiresProcess). Uses a
+ *  continuous 0–100 score distinct from the 0/50/100 rubric scheme. */
+export type PureEssayGrade = {
+  score: number; // 0~100
+  feedback: string;
+  isCorrect: boolean;
 };
 
 /**
@@ -212,6 +221,50 @@ export function buildAIGradeItems(
         studentAnswer: typeof sa === "string" ? sa : "",
       });
     }
+  }
+
+  return items;
+}
+
+/**
+ * Build grading items for pure essay questions (type="essay" without
+ * requiresProcess). Sent to /api/grade-essay for continuous 0–100 scoring.
+ */
+export function buildPureEssayGradeItems(
+  questions: QuestionInput[],
+  answers: Record<string, AnswerValue>
+): Array<{
+  id: string;
+  questionText: string;
+  modelAnswer: string;
+  explanation: string;
+  rubric: string;
+  studentAnswer: string;
+}> {
+  const items: Array<{
+    id: string;
+    questionText: string;
+    modelAnswer: string;
+    explanation: string;
+    rubric: string;
+    studentAnswer: string;
+  }> = [];
+
+  for (const q of questions) {
+    if (q.type !== "essay") continue;
+    if (q.requiresProcess) continue;
+
+    const sa = answers[q.id];
+    const studentAnswer = typeof sa === "string" ? sa : "";
+
+    items.push({
+      id: q.id,
+      questionText: q.questionText,
+      modelAnswer: q.answer ?? "",
+      explanation: q.explanation ?? "",
+      rubric: q.rubric ?? "",
+      studentAnswer,
+    });
   }
 
   return items;
@@ -275,7 +328,8 @@ export function gradeSubmission(
   questions: QuestionInput[],
   answers: Record<string, AnswerValue>,
   aiResults?: Map<string, boolean>,
-  essayResults?: Map<string, RubricGrade>
+  essayResults?: Map<string, RubricGrade>,
+  pureEssayResults?: Map<string, PureEssayGrade>
 ): GradeResult {
   let correctScore = 0;
   let gradable = 0;
@@ -286,8 +340,32 @@ export function gradeSubmission(
   for (const q of questions) {
     const studentAnswer: AnswerValue | undefined = answers[q.id];
 
-    // Pure essay (no requiresProcess) — not auto-graded
+    // Pure essay (no requiresProcess) — AI-graded via /api/grade-essay with
+    // continuous 0~100 score. Falls back to teacher review if no AI result.
     if (q.type === "essay" && !q.requiresProcess) {
+      const ai = pureEssayResults?.get(q.id);
+      if (ai) {
+        gradable++;
+        const fraction = ai.score / 100;
+        correctScore += fraction;
+        // Store as RubricGrade shape so existing render + recon paths
+        // light up the 🤖 feedback card automatically.
+        gradedResults[q.id] = { score: ai.score, feedback: ai.feedback };
+        const isPartial = !ai.isCorrect && ai.score > 0;
+        questionResults.push({
+          questionId: q.id,
+          questionNumber: q.questionNumber,
+          questionText: q.questionText,
+          type: q.type,
+          correctAnswer: q.answer ?? "",
+          studentAnswer: formatStudentAnswer(studentAnswer, q),
+          isCorrect: ai.isCorrect,
+          partialScore: isPartial ? fraction : undefined,
+          rubricScore: ai.score,
+          rubricFeedback: ai.feedback,
+        });
+        continue;
+      }
       essayCount++;
       gradedResults[q.id] = null;
       questionResults.push({
