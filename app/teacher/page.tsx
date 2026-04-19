@@ -13,8 +13,10 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+import { useRouter } from "next/navigation";
 import { db } from "@/lib/db";
 import { useTeacherId } from "@/lib/teacherId";
+import { clearTeacherSession, useTeacherSession } from "@/lib/teacherAuth";
 import {
   checkAnswer,
   formatStudentAnswer,
@@ -65,6 +67,13 @@ export default function TeacherDashboardPage() {
 
   const teacherId = useTeacherId();
   const teacherScope = teacherId ?? "";
+  const session = useTeacherSession();
+  const router = useRouter();
+
+  const handleLogout = () => {
+    clearTeacherSession();
+    router.replace("/teacher/login");
+  };
 
   /* ── Data queries ── */
   const scopedQuery = db.useQuery({
@@ -416,7 +425,10 @@ export default function TeacherDashboardPage() {
         <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-slate-900">교사 대시보드</h1>
-            <p className="mt-1 text-slate-500">학급의 누적 시험 데이터를 한눈에 확인하세요.</p>
+            <p className="mt-1 text-slate-500">
+              {session?.name ? `${session.name} 선생님 — ` : ""}
+              학급의 누적 시험 데이터를 한눈에 확인하세요.
+            </p>
           </div>
           <nav className="flex flex-wrap gap-2">
             <Link
@@ -437,6 +449,13 @@ export default function TeacherDashboardPage() {
             >
               ⚙️ 설정
             </Link>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="inline-flex items-center gap-1.5 rounded-xl border-2 border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-500 shadow-sm transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600"
+            >
+              로그아웃
+            </button>
           </nav>
         </header>
 

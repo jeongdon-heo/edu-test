@@ -54,7 +54,7 @@ export default function Home() {
   return (
     <main className="relative min-h-screen bg-gradient-to-b from-sky-50 to-blue-100 px-4 py-10">
       <Link
-        href="/teacher"
+        href="/teacher/login"
         className="absolute right-4 top-4 rounded-full border border-slate-300 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-500 shadow-sm transition hover:bg-white hover:text-slate-700"
       >
         선생님용 로그인

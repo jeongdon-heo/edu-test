@@ -1,26 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useTeacherSession } from "./teacherAuth";
 
-const STORAGE_KEY = "teacher_id";
-
-export function getOrCreateTeacherId(): string {
-  if (typeof window === "undefined") return "";
-  let id = window.localStorage.getItem(STORAGE_KEY);
-  if (!id) {
-    id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `teacher-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    window.localStorage.setItem(STORAGE_KEY, id);
-  }
-  return id;
-}
-
+/**
+ * Returns the logged-in teacher's id, or `null` while hydrating / logged out.
+ * Route guards in /teacher/* handle redirecting unauthenticated visitors.
+ */
 export function useTeacherId(): string | null {
-  const [id, setId] = useState<string | null>(null);
-  useEffect(() => {
-    setId(getOrCreateTeacherId());
-  }, []);
-  return id;
+  const session = useTeacherSession();
+  if (session === undefined) return null;
+  return session?.teacherId ?? null;
 }

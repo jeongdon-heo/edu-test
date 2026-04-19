@@ -11,6 +11,13 @@ export type QuestionType =
 
 const schema = i.schema({
   entities: {
+    teachers: i.entity({
+      username: i.string().indexed(),
+      passwordHash: i.string(),
+      salt: i.string(),
+      name: i.string(),
+      createdAt: i.number(),
+    }),
     students: i.entity({
       name: i.string(),
       studentNumber: i.number(),
