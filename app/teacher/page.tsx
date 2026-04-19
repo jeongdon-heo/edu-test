@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import {
   LineChart,
@@ -688,7 +688,20 @@ export default function TeacherDashboardPage() {
                       return (
                         <tr key={row.result.id} onClick={() => setSelectedResultId(row.result.id)} className={"cursor-pointer transition " + (isSelected ? "bg-sky-50" : "hover:bg-slate-50")}>
                           <td className="px-4 py-4 text-slate-500">{row.student.studentNumber}</td>
-                          <td className="px-4 py-4 font-medium text-slate-900">{row.student.name}</td>
+                          <td className="px-4 py-4 font-medium text-slate-900">
+                            <span className="inline-flex items-center gap-1.5">
+                              {row.student.name}
+                              {hasTeacherEdit(row.result.gradedResults) && (
+                                <span
+                                  title="교사가 채점을 수정한 문항이 있어요"
+                                  className="text-sm"
+                                  aria-label="교사 수정"
+                                >
+                                  ✍️
+                                </span>
+                              )}
+                            </span>
+                          </td>
                           <td className="px-4 py-4">
                             <span className={"inline-flex rounded-full px-3 py-1 text-xs font-semibold " + scoreBadgeClass(row.result.score)}>
                               {row.result.score}점
@@ -834,18 +847,50 @@ function DetailPanel({ row, questions, onClose }: { row: Row; questions: MockQue
             const displaySa = formatStudentAnswer(rawSa, q);
             const stored = row.result.gradedResults?.[q.id];
             const rubric: RubricGrade | null = stored && isRubricGrade(stored) ? stored : null;
-            const correct = rubric ? rubric.score === 100 : stored !== undefined && stored !== null ? (stored as boolean) : checkAnswer(rawSa, q.answer ?? "", q);
-            const isPartial = rubric ? rubric.score === 50 : false;
+            const rubricRight = rubric ? rubric.score >= 80 : false;
+            const rubricPartial = rubric ? rubric.score > 0 && rubric.score < 80 : false;
+            const correct = rubric
+              ? rubricRight
+              : stored !== undefined && stored !== null
+                ? (stored as boolean)
+                : checkAnswer(rawSa, q.answer ?? "", q);
             const isProcess = rawSa && typeof rawSa === "object" && !Array.isArray(rawSa) && "process" in rawSa;
             const borderCls = rubric
-              ? rubric.score === 100 ? "border-emerald-200 bg-emerald-50" : rubric.score === 50 ? "border-amber-200 bg-amber-50" : "border-rose-200 bg-rose-50"
-              : correct === null ? "border-slate-200 bg-white" : correct ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50";
+              ? rubricRight
+                ? "border-emerald-200 bg-emerald-50"
+                : rubricPartial
+                  ? "border-amber-200 bg-amber-50"
+                  : "border-rose-200 bg-rose-50"
+              : correct === null
+                ? "border-slate-200 bg-white"
+                : correct
+                  ? "border-emerald-200 bg-emerald-50"
+                  : "border-rose-200 bg-rose-50";
+            const mark = rubric
+              ? rubricRight
+                ? "O"
+                : rubricPartial
+                  ? "△"
+                  : "X"
+              : correct
+                ? "O"
+                : "X";
+            const markBg = rubric
+              ? rubricRight
+                ? "bg-emerald-500"
+                : rubricPartial
+                  ? "bg-amber-500"
+                  : "bg-rose-500"
+              : correct
+                ? "bg-emerald-500"
+                : "bg-rose-500";
+            const editedByTeacher = rubric?.editedByTeacher === true;
             return (
               <li key={q.id} className={"rounded-lg border p-3 text-sm " + borderCls}>
                 <div className="flex items-start gap-2">
                   {(correct !== null || rubric) && (
-                    <span className={"mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full text-xs font-bold text-white " + (rubric ? (rubric.score === 100 ? "bg-emerald-500" : rubric.score === 50 ? "bg-amber-500" : "bg-rose-500") : correct ? "bg-emerald-500" : "bg-rose-500")}>
-                      {rubric ? (rubric.score === 100 ? "O" : rubric.score === 50 ? "△" : "X") : correct ? "O" : "X"}
+                    <span className={"mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full text-xs font-bold text-white " + markBg}>
+                      {mark}
                     </span>
                   )}
                   <div className="flex-1">
@@ -854,11 +899,21 @@ function DetailPanel({ row, questions, onClose }: { row: Row; questions: MockQue
                     <p className="mt-1 text-slate-600">답: {displaySa || "(미응답)"}</p>
                     {rubric && (
                       <div className="mt-2 rounded-md bg-violet-50 p-2.5">
-                        <div className="flex items-center justify-between">
-                          <p className="text-xs font-bold text-violet-700">AI 채점: {rubric.score}점{isPartial && " (부분 점수)"}</p>
-                          <ScoreOverride resultId={row.result.id} questionId={q.id} currentScore={rubric.score} currentFeedback={rubric.feedback} gradedResults={row.result.gradedResults} />
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-xs font-bold text-violet-700">
+                            {editedByTeacher ? "✍️ 교사 채점" : "🤖 AI 채점"}: {rubric.score}점
+                            {rubricPartial && " (부분 점수)"}
+                          </p>
+                          <TeacherGradeEditor
+                            resultId={row.result.id}
+                            questionId={q.id}
+                            currentScore={rubric.score}
+                            currentFeedback={rubric.feedback}
+                            gradedResults={row.result.gradedResults}
+                            questions={questions}
+                          />
                         </div>
-                        {rubric.feedback && <p className="mt-1 text-xs text-violet-600">{rubric.feedback}</p>}
+                        {rubric.feedback && <p className="mt-1 whitespace-pre-wrap text-xs text-violet-600">{rubric.feedback}</p>}
                       </div>
                     )}
                     {!rubric && correct === false && <p className="mt-0.5 text-xs font-medium text-emerald-700">정답: {q.answer}</p>}
@@ -907,32 +962,184 @@ function AnalysisCards({ raw }: { raw?: string }) {
   );
 }
 
-function ScoreOverride({ resultId, questionId, currentScore, currentFeedback, gradedResults }: {
-  resultId: string; questionId: string; currentScore: number; currentFeedback: string; gradedResults?: Record<string, unknown>;
+function TeacherGradeEditor({
+  resultId,
+  questionId,
+  currentScore,
+  currentFeedback,
+  gradedResults,
+  questions,
+}: {
+  resultId: string;
+  questionId: string;
+  currentScore: number;
+  currentFeedback: string;
+  gradedResults?: Record<string, unknown>;
+  questions: MockQuestion[];
 }) {
   const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(String(currentScore));
+  const [scoreVal, setScoreVal] = useState(String(currentScore));
+  const [feedbackVal, setFeedbackVal] = useState(currentFeedback);
   const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // Keep local state in sync if props change (e.g. another edit updates DB).
+  useEffect(() => {
+    if (!editing) {
+      setScoreVal(String(currentScore));
+      setFeedbackVal(currentFeedback);
+    }
+  }, [currentScore, currentFeedback, editing]);
+
+  const showToast = (text: string) => {
+    setToast(text);
+    setTimeout(() => setToast(null), 2200);
+  };
+
+  const computeTotal = (merged: Record<string, unknown>): number => {
+    let sum = 0;
+    let gradable = 0;
+    for (const q of questions) {
+      if (q.type === "essay" && !q.requiresProcess) {
+        const v = merged[q.id];
+        if (v && typeof v === "object" && "score" in (v as Record<string, unknown>)) {
+          gradable++;
+          sum += (v as { score: number }).score;
+        }
+        continue;
+      }
+      const v = merged[q.id];
+      if (isRubricGrade(v)) {
+        gradable++;
+        sum += (v as { score: number }).score;
+      } else if (typeof v === "boolean") {
+        gradable++;
+        sum += v ? 100 : 0;
+      } else if (v === null || v === undefined) {
+        // Unscored — skip from denominator.
+      }
+    }
+    if (gradable === 0) return 0;
+    return Math.round(sum / gradable);
+  };
+
   const handleSave = async () => {
-    const num = Number(val);
-    if (![0, 50, 100].includes(num)) { alert("0, 50, 100 중 하나를 입력해 주세요."); return; }
+    const num = Math.round(Number(scoreVal));
+    if (!Number.isFinite(num) || num < 0 || num > 100) {
+      alert("점수는 0~100 사이 숫자로 입력해 주세요.");
+      return;
+    }
     setSaving(true);
     try {
-      const updated = { ...(gradedResults ?? {}), [questionId]: { score: num, feedback: currentFeedback + " (교사 수정)" } };
-      await db.transact(db.tx.results[resultId].update({ gradedResults: updated }));
+      const updated = {
+        ...(gradedResults ?? {}),
+        [questionId]: {
+          score: num,
+          feedback: feedbackVal.trim(),
+          editedByTeacher: true,
+        },
+      };
+      const newTotal = computeTotal(updated);
+      await db.transact(
+        db.tx.results[resultId].update({
+          gradedResults: updated,
+          score: newTotal,
+        })
+      );
       setEditing(false);
-    } catch { alert("저장에 실패했습니다."); } finally { setSaving(false); }
+      showToast("성공적으로 수정되었습니다");
+    } catch {
+      alert("저장에 실패했습니다.");
+    } finally {
+      setSaving(false);
+    }
   };
-  if (!editing) return <button onClick={() => setEditing(true)} className="rounded border border-violet-300 bg-white px-2 py-0.5 text-[10px] font-medium text-violet-600 hover:bg-violet-50">점수 수정</button>;
+
   return (
-    <div className="flex items-center gap-1">
-      <select value={val} onChange={(e) => setVal(e.target.value)} className="rounded border border-violet-300 bg-white px-1.5 py-0.5 text-xs text-violet-800">
-        <option value="0">0점</option><option value="50">50점</option><option value="100">100점</option>
-      </select>
-      <button onClick={handleSave} disabled={saving} className="rounded bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white disabled:opacity-50">{saving ? "..." : "저장"}</button>
-      <button onClick={() => setEditing(false)} className="text-[10px] text-slate-400 hover:text-slate-600">취소</button>
+    <div className="relative">
+      {toast && (
+        <div className="pointer-events-none absolute -top-10 right-0 z-10 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-lg">
+          {toast}
+        </div>
+      )}
+
+      {!editing ? (
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="rounded border border-violet-300 bg-white px-2 py-0.5 text-[10px] font-medium text-violet-600 hover:bg-violet-50"
+        >
+          ✍️ 채점 수정
+        </button>
+      ) : (
+        <div className="mt-2 space-y-2 rounded-lg border border-violet-300 bg-white p-3">
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-violet-700">
+              점수 (0~100)
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              value={scoreVal}
+              onChange={(e) => setScoreVal(e.target.value)}
+              className="w-24 rounded border border-violet-300 px-2 py-1 text-sm text-violet-900 focus:border-violet-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-violet-700">
+              피드백
+            </label>
+            <textarea
+              value={feedbackVal}
+              onChange={(e) => setFeedbackVal(e.target.value)}
+              rows={3}
+              className="w-full rounded border border-violet-300 px-2 py-1.5 text-xs text-slate-800 focus:border-violet-500 focus:outline-none"
+              placeholder="학생에게 보여줄 피드백"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="rounded bg-violet-600 px-3 py-1 text-xs font-semibold text-white shadow hover:bg-violet-700 disabled:opacity-50"
+            >
+              {saving ? "저장 중..." : "확정"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(false);
+                setScoreVal(String(currentScore));
+                setFeedbackVal(currentFeedback);
+              }}
+              disabled={saving}
+              className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function hasTeacherEdit(gradedResults?: Record<string, unknown>): boolean {
+  if (!gradedResults) return false;
+  for (const v of Object.values(gradedResults)) {
+    if (
+      v &&
+      typeof v === "object" &&
+      "editedByTeacher" in (v as Record<string, unknown>) &&
+      (v as { editedByTeacher?: boolean }).editedByTeacher === true
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function scoreBadgeClass(score: number) {

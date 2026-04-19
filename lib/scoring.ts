@@ -3,8 +3,13 @@ export type AnswerValue =
   | string[]
   | { process: string; answer: string };
 
-/** Rubric grade for essay (requiresProcess) questions */
-export type RubricGrade = { score: number; feedback: string };
+/** Rubric / AI-grade shape for essay questions. `editedByTeacher` flips
+ *  when a teacher overrides the AI result via the detail panel. */
+export type RubricGrade = {
+  score: number;
+  feedback: string;
+  editedByTeacher?: boolean;
+};
 
 /** Per-question grading result stored in DB */
 export type GradedResultValue = boolean | null | RubricGrade;
