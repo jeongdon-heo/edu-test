@@ -24,10 +24,31 @@ const BADGE_COLORS = [
 
 export default function Home() {
   const router = useRouter();
-  const { data, isLoading } = db.useQuery({ students: {} });
+
+  // Pick the most recently created teacher as the active classroom.
+  // Single-teacher deployments resolve unambiguously; if multiple teachers
+  // exist the newest one wins.
+  const teachersQuery = db.useQuery({ teachers: {} });
+  const activeTeacherId = useMemo(() => {
+    const teachers = (teachersQuery.data?.teachers ?? []) as Array<{
+      id: string;
+      createdAt?: number;
+    }>;
+    if (teachers.length === 0) return null;
+    return [...teachers].sort(
+      (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)
+    )[0].id;
+  }, [teachersQuery.data]);
+
+  const studentsQuery = db.useQuery({
+    students: {
+      $: { where: { teacher_id: activeTeacherId ?? "__none__" } },
+    },
+  });
+  const isLoading = teachersQuery.isLoading || studentsQuery.isLoading;
 
   const students = useMemo<NameTagStudent[]>(() => {
-    const fromDb = (data?.students ?? [])
+    const fromDb = (studentsQuery.data?.students ?? [])
       .filter(
         (s): s is typeof s & { name: string; studentNumber: number } =>
           typeof s.name === "string" && typeof s.studentNumber === "number"
@@ -41,10 +62,10 @@ export default function Home() {
     return [...list].sort(
       (a, b) => (a.studentNumber ?? 0) - (b.studentNumber ?? 0)
     );
-  }, [data]);
+  }, [studentsQuery.data]);
 
   const showingDemo =
-    !isLoading && (data?.students?.length ?? 0) === 0;
+    !isLoading && (studentsQuery.data?.students?.length ?? 0) === 0;
 
   const handleLogin = (student: NameTagStudent) => {
     setLoggedInStudent(student);
