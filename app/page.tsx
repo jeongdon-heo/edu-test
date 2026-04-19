@@ -95,7 +95,10 @@ export default function Home() {
     : [...demoClassStudents].sort((a, b) => a.studentNumber - b.studentNumber);
 
   const handleLogin = (student: NameTagStudent) => {
-    setLoggedInStudent(student);
+    setLoggedInStudent({
+      ...student,
+      teacherId: activeTeacherId ?? undefined,
+    });
     router.push("/test");
   };
 

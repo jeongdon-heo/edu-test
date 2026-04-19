@@ -2,20 +2,48 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { db } from "@/lib/db";
 import {
   clearLoggedInStudent,
   useLoggedInStudent,
 } from "@/lib/studentLogin";
 
+type TestRow = {
+  id: string;
+  title?: string;
+  subject?: string;
+  createdAt?: number;
+  teacher_id?: string;
+};
+
 export default function TestListPage() {
   const router = useRouter();
   const loggedIn = useLoggedInStudent();
-  const { isLoading, error, data } = db.useQuery({ tests: {} });
+
+  // Mirror the teacher dashboard's query:
+  //   tests: { $: { where: { teacher_id: teacherScope } } }
+  // using the student's classroom teacherId. Filtering at the query layer
+  // keeps deleted or orphan tests (anonymous-UUID teachers from the pre-auth
+  // era) from leaking onto the student screen.
+  const teacherScope = loggedIn?.teacherId ?? "";
+  const { isLoading, error, data } = db.useQuery({
+    tests: {
+      $: { where: { teacher_id: teacherScope || "__none__" } },
+    },
+  });
 
   useEffect(() => {
     if (loggedIn === null) router.replace("/");
+  }, [loggedIn, router]);
+
+  useEffect(() => {
+    // Legacy sessions without teacherId (pre–student-scoping) can't resolve
+    // a classroom — force re-login so the student picks their class again.
+    if (loggedIn && !loggedIn.teacherId) {
+      clearLoggedInStudent();
+      router.replace("/");
+    }
   }, [loggedIn, router]);
 
   const handleWrongPerson = () => {
@@ -23,9 +51,18 @@ export default function TestListPage() {
     router.replace("/");
   };
 
-  const tests = [...(data?.tests ?? [])].sort(
-    (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)
-  );
+  const tests = useMemo(() => {
+    const rows = (data?.tests ?? []) as TestRow[];
+    return rows
+      .filter(
+        (t): t is TestRow & { title: string; subject: string } =>
+          !!t.teacher_id &&
+          t.teacher_id === teacherScope &&
+          typeof t.title === "string" &&
+          typeof t.subject === "string"
+      )
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  }, [data, teacherScope]);
 
   return (
     <main className="min-h-screen bg-sky-50 px-6 py-10">
