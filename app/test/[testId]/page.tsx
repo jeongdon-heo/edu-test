@@ -521,13 +521,25 @@ export default function TakeTestPage({ params }: PageProps) {
 
                 {/* ── 일반 서술형 (requiresProcess 아닌 경우) ── */}
                 {q.type === "essay" && !requiresProcess && (
-                  <textarea
-                    value={typeof answers[q.id] === "string" ? (answers[q.id] as string) : ""}
-                    onChange={(e) => setAnswer(q.id, e.target.value)}
-                    placeholder="생각을 자유롭게 적어보세요"
-                    rows={5}
-                    className="w-full resize-none rounded-2xl border-4 border-slate-200 px-6 py-5 text-xl leading-relaxed text-slate-900 focus:border-sky-500 focus:outline-none"
-                  />
+                  <div>
+                    <SpecialSymbolToolbar
+                      className="mb-2"
+                      onAppend={(ch) => {
+                        const current =
+                          typeof answers[q.id] === "string"
+                            ? (answers[q.id] as string)
+                            : "";
+                        setAnswer(q.id, current + ch);
+                      }}
+                    />
+                    <textarea
+                      value={typeof answers[q.id] === "string" ? (answers[q.id] as string) : ""}
+                      onChange={(e) => setAnswer(q.id, e.target.value)}
+                      placeholder="생각을 자유롭게 적어보세요"
+                      rows={5}
+                      className="w-full resize-none rounded-2xl border-4 border-slate-200 px-6 py-5 text-xl leading-relaxed text-slate-900 focus:border-sky-500 focus:outline-none"
+                    />
+                  </div>
                 )}
               </li>
             );
@@ -598,6 +610,37 @@ function CircleCharToolbar({ onInsert }: { onInsert: (ch: string) => void }) {
   );
 }
 
+/* ── 특수기호 간편 입력 툴바 ── */
+const SPECIAL_SYMBOLS = ["○", "×", "①", "②", "③", "④", "⑤"];
+
+function SpecialSymbolToolbar({
+  onAppend,
+  className = "",
+}: {
+  onAppend: (ch: string) => void;
+  className?: string;
+}) {
+  return (
+    <div className={`flex flex-wrap gap-1.5 ${className}`}>
+      {SPECIAL_SYMBOLS.map((ch) => (
+        <button
+          key={ch}
+          type="button"
+          // Prevent focus loss so the last-focused input stays active — this
+          // keeps the mobile keyboard from flicking away between taps.
+          onMouseDown={(e) => e.preventDefault()}
+          onTouchStart={(e) => e.preventDefault()}
+          onClick={() => onAppend(ch)}
+          aria-label={`특수기호 ${ch} 입력`}
+          className="flex h-10 min-w-[2.5rem] items-center justify-center rounded-full border border-slate-300 bg-white px-3 text-lg font-semibold text-slate-700 shadow-sm transition active:scale-95 active:bg-sky-50 hover:bg-slate-50"
+        >
+          {ch}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /* ── 일반 단답형 입력 (원문자 키보드 + 단위 표시) ── */
 function ShortAnswerInput({
   value,
@@ -628,6 +671,10 @@ function ShortAnswerInput({
   return (
     <div>
       {showCircleKeyboard && <CircleCharToolbar onInsert={insertChar} />}
+      <SpecialSymbolToolbar
+        className="mb-2"
+        onAppend={(ch) => onChange(value + ch)}
+      />
       <div className="flex items-center gap-3">
         <input
           ref={inputRef}
@@ -661,11 +708,18 @@ function MultiBlankInput({
   onChange: (index: number, val: string) => void;
   unit?: string | null;
 }) {
+  const [focused, setFocused] = useState(0);
+  const appendToFocused = (ch: string) => {
+    const idx = Math.min(focused, count - 1);
+    const current = value[idx] ?? "";
+    onChange(idx, current + ch);
+  };
   return (
     <div>
       <p className="mb-3 rounded-lg bg-sky-50 px-4 py-2.5 text-sm font-bold text-sky-700">
         ※ 위에서 아래로, 왼쪽에서 오른쪽 순서대로 빈칸을 채워주세요.
       </p>
+      <SpecialSymbolToolbar className="mb-3" onAppend={appendToFocused} />
       <div className="space-y-3">
         {Array.from({ length: count }).map((_, i) => (
           <div key={i} className="flex items-center gap-3">
@@ -677,6 +731,7 @@ function MultiBlankInput({
                 type="text"
                 value={value[i] ?? ""}
                 onChange={(e) => onChange(i, e.target.value)}
+                onFocus={() => setFocused(i)}
                 placeholder={`${CIRCLED_NUMS[i] ?? i + 1}번째 빈칸`}
                 className="min-w-0 flex-1 rounded-xl border-4 border-slate-200 px-4 py-4 text-center text-2xl font-medium text-slate-900 focus:border-sky-500 focus:outline-none"
               />
@@ -705,27 +760,37 @@ function SubItemsInput({
   onChange: (index: number, val: string) => void;
   unit?: string | null;
 }) {
+  const [focused, setFocused] = useState(0);
+  const appendToFocused = (ch: string) => {
+    const idx = Math.min(focused, subItems.length - 1);
+    const current = value[idx] ?? "";
+    onChange(idx, current + ch);
+  };
   return (
-    <div className="space-y-4">
-      {subItems.map((label, i) => (
-        <div key={i}>
-          <p className="mb-2 text-lg font-semibold text-slate-700">{label}</p>
-          <div className="flex items-center gap-3">
-            <input
-              type="text"
-              value={value[i] ?? ""}
-              onChange={(e) => onChange(i, e.target.value)}
-              placeholder="답을 써보세요"
-              className="min-w-0 flex-1 rounded-xl border-4 border-slate-200 px-5 py-4 text-2xl font-medium text-slate-900 focus:border-sky-500 focus:outline-none"
-            />
-            {unit && (
-              <span className="flex-none text-2xl font-bold text-slate-500">
-                {unit}
-              </span>
-            )}
+    <div>
+      <SpecialSymbolToolbar className="mb-3" onAppend={appendToFocused} />
+      <div className="space-y-4">
+        {subItems.map((label, i) => (
+          <div key={i}>
+            <p className="mb-2 text-lg font-semibold text-slate-700">{label}</p>
+            <div className="flex items-center gap-3">
+              <input
+                type="text"
+                value={value[i] ?? ""}
+                onChange={(e) => onChange(i, e.target.value)}
+                onFocus={() => setFocused(i)}
+                placeholder="답을 써보세요"
+                className="min-w-0 flex-1 rounded-xl border-4 border-slate-200 px-5 py-4 text-2xl font-medium text-slate-900 focus:border-sky-500 focus:outline-none"
+              />
+              {unit && (
+                <span className="flex-none text-2xl font-bold text-slate-500">
+                  {unit}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -788,6 +853,10 @@ function ProcessAnswerInput({
             </button>
           ))}
         </div>
+        <SpecialSymbolToolbar
+          className="mb-2"
+          onAppend={(ch) => onChangeProcess(value.process + ch)}
+        />
         <textarea
           ref={processRef}
           value={value.process}
@@ -803,6 +872,10 @@ function ProcessAnswerInput({
         <label className="mb-2 block text-base font-bold text-sky-700">
           답
         </label>
+        <SpecialSymbolToolbar
+          className="mb-2"
+          onAppend={(ch) => onChangeAnswer(value.answer + ch)}
+        />
         <div className="flex items-center gap-3">
           <input
             type="text"
