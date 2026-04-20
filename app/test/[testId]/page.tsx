@@ -21,6 +21,13 @@ type PageProps = {
   params: Promise<{ testId: string }>;
 };
 
+class GradingBusyError extends Error {
+  constructor() {
+    super("grading server busy");
+    this.name = "GradingBusyError";
+  }
+}
+
 function formatDate(ts?: number) {
   if (!ts) return "";
   const d = new Date(ts);
@@ -36,6 +43,8 @@ export default function TakeTestPage({ params }: PageProps) {
   const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<SubmitResult | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const submitLockRef = useRef(false);
 
   // Hydration: once we know the student is not logged in, bounce to root.
   useEffect(() => {
@@ -229,13 +238,20 @@ export default function TakeTestPage({ params }: PageProps) {
   }, [answers, totalQuestions, result]);
 
   const handleSubmit = async () => {
-    if (submitting || result) return;
+    if (submitLockRef.current || submitting || result) return;
     if (!studentId) {
       alert("먼저 본인을 골라주세요!");
       return;
     }
 
+    submitLockRef.current = true;
     setSubmitting(true);
+    setToastMessage(null);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+    const busyMessage =
+      "채점 서버에 접속자가 많아요. 작성한 답안은 임시 저장되었으니 1분 뒤에 다시 제출해 주세요.";
 
     try {
       // 1) Build grading items
@@ -265,9 +281,8 @@ export default function TakeTestPage({ params }: PageProps) {
               method: "POST",
               headers: buildHeaders(),
               body: JSON.stringify({ items: aiItems, essayItems }),
+              signal: controller.signal,
             })
-              .then((r) => (r.ok ? r.json() : null))
-              .catch(() => null)
           : Promise.resolve(null);
 
       const pureEssayCall =
@@ -276,15 +291,21 @@ export default function TakeTestPage({ params }: PageProps) {
               method: "POST",
               headers: buildHeaders(),
               body: JSON.stringify({ items: pureEssayItems }),
+              signal: controller.signal,
             })
-              .then((r) => (r.ok ? r.json() : null))
-              .catch(() => null)
           : Promise.resolve(null);
 
-      const [gradeJson, pureEssayJson] = await Promise.all([
+      const [gradeResp, pureEssayResp] = await Promise.all([
         gradeCall,
         pureEssayCall,
       ]);
+
+      // Treat any non-OK (incl. 429) as a grading failure → busy toast.
+      if (gradeResp && !gradeResp.ok) throw new GradingBusyError();
+      if (pureEssayResp && !pureEssayResp.ok) throw new GradingBusyError();
+
+      const gradeJson = gradeResp ? await gradeResp.json() : null;
+      const pureEssayJson = pureEssayResp ? await pureEssayResp.json() : null;
 
       if (gradeJson) {
         for (const r of gradeJson.results ?? []) {
@@ -360,9 +381,20 @@ export default function TakeTestPage({ params }: PageProps) {
         questionResults: grade.questionResults,
       });
     } catch (err) {
-      console.error("[submit] failed", err);
-      alert("제출에 실패했어요. 잠시 후 다시 시도해 주세요.");
+      const isTimeout =
+        err instanceof DOMException && err.name === "AbortError";
+      const isBusy = err instanceof GradingBusyError;
+      const isNetwork = err instanceof TypeError; // fetch network failure
+      if (isTimeout || isBusy || isNetwork) {
+        console.warn("[submit] grading server busy", err);
+        setToastMessage(busyMessage);
+      } else {
+        console.error("[submit] failed", err);
+        alert("제출에 실패했어요. 잠시 후 다시 시도해 주세요.");
+      }
     } finally {
+      clearTimeout(timeoutId);
+      submitLockRef.current = false;
       setSubmitting(false);
     }
   };
@@ -397,6 +429,13 @@ export default function TakeTestPage({ params }: PageProps) {
 
   return (
     <main className="min-h-screen bg-sky-50 px-4 py-8">
+      {submitting && <GradingOverlay />}
+      {toastMessage && (
+        <GradingToast
+          message={toastMessage}
+          onClose={() => setToastMessage(null)}
+        />
+      )}
       <div className="mx-auto max-w-2xl">
         <header className="mb-6 text-center">
           <p className="text-sm font-semibold text-sky-700">{test.subject}</p>
@@ -597,7 +636,7 @@ export default function TakeTestPage({ params }: PageProps) {
           className="mt-8 w-full rounded-3xl bg-sky-600 px-6 py-6 text-3xl font-bold text-white shadow-lg transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting
-            ? "채점 중... 잠시만 기다려 주세요"
+            ? "채점 중..."
             : existingResult
               ? "다시 제출하기 ✅"
               : "제출하기 ✅"}
@@ -617,6 +656,64 @@ function needsCircleKeyboard(q: { questionText: string; answer: string; options?
 }
 
 /* ── Sub-components ── */
+
+function GradingOverlay() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-sky-900/40 px-6 backdrop-blur-sm"
+    >
+      <div className="flex w-full max-w-md flex-col items-center gap-6 rounded-3xl border-4 border-sky-200 bg-white px-8 py-10 shadow-2xl">
+        <div className="relative h-24 w-24">
+          <span className="absolute inset-0 animate-ping rounded-full bg-sky-300 opacity-60" />
+          <span className="absolute inset-2 animate-spin rounded-full border-4 border-sky-100 border-t-sky-600" />
+          <span className="absolute inset-0 flex items-center justify-center text-4xl">
+            🤖
+          </span>
+        </div>
+        <p className="text-center text-xl font-bold leading-relaxed text-sky-900">
+          🤖 AI 선생님이 서술형 답안을
+          <br />
+          꼼꼼히 채점하고 있어요!
+        </p>
+        <p className="text-center text-base font-medium text-slate-500">
+          잠시만 기다려주세요...
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function GradingToast({
+  message,
+  onClose,
+}: {
+  message: string;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      role="alert"
+      className="fixed bottom-6 left-1/2 z-[60] w-[92%] max-w-md -translate-x-1/2"
+    >
+      <div className="flex items-start gap-3 rounded-2xl border-4 border-amber-300 bg-amber-50 px-5 py-4 shadow-xl">
+        <span className="text-2xl leading-none">⚠️</span>
+        <p className="flex-1 text-base font-semibold leading-relaxed text-amber-900">
+          {message}
+        </p>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="알림 닫기"
+          className="rounded-full px-2 py-1 text-lg font-bold text-amber-700 transition hover:bg-amber-100"
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function TypeLabel({ type, requiresProcess }: { type: string; requiresProcess?: boolean }) {
   const map: Record<string, { label: string; cls: string }> = {
