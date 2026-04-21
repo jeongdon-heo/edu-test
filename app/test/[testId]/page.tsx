@@ -501,16 +501,23 @@ export default function TakeTestPage({ params }: PageProps) {
                   <TypeLabel type={q.type} requiresProcess={requiresProcess} />
                 </div>
 
-                {q.materialImage && (
-                  <div className="mb-5 overflow-hidden rounded-2xl border-4 border-slate-200 bg-slate-50">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={q.materialImage}
-                      alt={`${q.questionNumber}번 지문/자료`}
-                      className="block w-full"
-                    />
-                  </div>
-                )}
+                {q.materialImage &&
+                  (qIdx === 0 ||
+                    questions[qIdx - 1]?.materialImage !== q.materialImage) && (
+                    <div className="mb-5 overflow-hidden rounded-2xl border-4 border-amber-300 bg-amber-50 p-3">
+                      <p className="mb-2 text-xs font-bold uppercase tracking-wide text-amber-800">
+                        📖 공통 지문
+                      </p>
+                      <div className="overflow-hidden rounded-xl border-2 border-amber-200 bg-white">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={q.materialImage}
+                          alt="공통 지문"
+                          className="block w-full"
+                        />
+                      </div>
+                    </div>
+                  )}
 
                 <p className="mb-5 text-2xl font-semibold leading-relaxed text-slate-800">
                   {q.questionText}
