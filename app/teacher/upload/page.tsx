@@ -280,6 +280,7 @@ async function saveToInstantDB(
         answer: q.answer,
         explanation: q.explanation,
         ...(q.materialImage ? { materialImage: q.materialImage } : {}),
+        ...(q.questionImage ? { questionImage: q.questionImage } : {}),
         ...(q.blankCount ? { blankCount: q.blankCount } : {}),
         ...(q.subItems ? { subItems: q.subItems } : {}),
         ...(q.requiresProcess ? { requiresProcess: q.requiresProcess } : {}),
@@ -310,6 +311,9 @@ export default function UploadPdfPage() {
   const [error, setError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingMode, setEditingMode] = useState<"material" | "question">(
+    "material"
+  );
   const [sharedOpen, setSharedOpen] = useState(false);
   const [cropping, setCropping] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -456,15 +460,23 @@ export default function UploadPdfPage() {
     const q = questions[index];
     const pageImg = pageImages[q.pageIndex];
     if (!pageImg) return;
+    const mode = editingMode;
     setEditingIndex(null);
     setCropping(true);
     try {
       const cropped = await cropImage(pageImg, bbox);
-      updateQuestion(index, {
-        materialImage: cropped,
-        materialImageBBox: bbox,
-        hasImage: true,
-      });
+      if (mode === "question") {
+        updateQuestion(index, {
+          questionImage: cropped,
+          questionImageBBox: bbox,
+        });
+      } else {
+        updateQuestion(index, {
+          materialImage: cropped,
+          materialImageBBox: bbox,
+          hasImage: true,
+        });
+      }
     } catch {
       alert("이미지 크롭에 실패했습니다.");
     } finally {
@@ -473,8 +485,13 @@ export default function UploadPdfPage() {
   };
 
   const handleBBoxRemove = (index: number) => {
+    const mode = editingMode;
     setEditingIndex(null);
-    updateQuestion(index, { materialImage: null, materialImageBBox: null });
+    if (mode === "question") {
+      updateQuestion(index, { questionImage: null, questionImageBBox: null });
+    } else {
+      updateQuestion(index, { materialImage: null, materialImageBBox: null });
+    }
   };
 
   /* ── shared material apply ── */
@@ -700,28 +717,59 @@ export default function UploadPdfPage() {
             <ol className="space-y-4">
               {questions.map((q, idx) => {
                 const hasPage = !!pageImages[q.pageIndex];
+                const isFirstInPassageGroup =
+                  !!q.materialImage &&
+                  (idx === 0 ||
+                    questions[idx - 1]?.materialImage !== q.materialImage);
                 return (
                   <li key={`${q.questionNumber}-${idx}`} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                    {isFirstInPassageGroup && (
+                      <div className="mb-4 overflow-hidden rounded-xl border-4 border-amber-300 bg-amber-50 p-3">
+                        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-amber-800">
+                          📖 공통 지문
+                        </p>
+                        <div className="overflow-hidden rounded-lg border-2 border-amber-200 bg-white">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={q.materialImage!} alt="공통 지문" className="block w-full" />
+                        </div>
+                      </div>
+                    )}
+
                     <div className="mb-3 flex flex-wrap items-center gap-2">
                       <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs font-semibold text-white">{q.questionNumber}번</span>
                       <TypeBadge type={q.type} />
                       {q.hasImage && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">그림 포함</span>}
                       {editable && hasPage && (
-                        <span className="group relative ml-auto">
-                          <button onClick={() => setEditingIndex(idx)} className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700 transition hover:bg-violet-100">
-                            {q.materialImageBBox ? "영역 수정" : "영역 지정"}
+                        <div className="ml-auto flex gap-2">
+                          <button
+                            onClick={() => {
+                              setEditingMode("question");
+                              setEditingIndex(idx);
+                            }}
+                            className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700 transition hover:bg-sky-100"
+                          >
+                            문항 영역 {q.questionImageBBox ? "수정" : "지정"}
                           </button>
-                          <span className="pointer-events-none absolute right-0 top-full z-20 mt-1 hidden w-56 rounded-lg bg-slate-800 px-3 py-2 text-xs leading-relaxed text-white shadow-lg group-hover:block">
-                            AI가 보기나 지문을 놓쳤다면, 여기서 해당 영역까지 넉넉히 박스를 그려 이미지로 포함시킬 수 있어요.
-                          </span>
-                        </span>
+                          <button
+                            onClick={() => {
+                              setEditingMode("material");
+                              setEditingIndex(idx);
+                            }}
+                            className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700 transition hover:bg-violet-100"
+                          >
+                            지문 영역 {q.materialImageBBox ? "수정" : "지정"}
+                          </button>
+                        </div>
                       )}
                     </div>
 
-                    {q.materialImage && (
-                      <div className="mb-3 overflow-hidden rounded-lg border-2 border-slate-200 bg-slate-50">
+                    {q.questionImage && (
+                      <div className="mb-3 overflow-hidden rounded-lg border-2 border-sky-200 bg-sky-50">
+                        <p className="bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-800">
+                          🧩 문항 고유 영역
+                        </p>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={q.materialImage} alt={`${q.questionNumber}번 지문/자료`} className="block w-full" />
+                        <img src={q.questionImage} alt={`${q.questionNumber}번 문항 영역`} className="block w-full bg-white" />
                       </div>
                     )}
 
@@ -833,7 +881,14 @@ export default function UploadPdfPage() {
           pageImage={pageImages[questions[editingIndex].pageIndex]}
           textBlocks={pageTextBlocks[questions[editingIndex].pageIndex]}
           questionNumber={questions[editingIndex].questionNumber}
-          initialBBox={questions[editingIndex].materialImageBBox}
+          initialBBox={
+            editingMode === "question"
+              ? questions[editingIndex].questionImageBBox
+              : questions[editingIndex].materialImageBBox
+          }
+          title={
+            editingMode === "question" ? "문항 고유 영역" : "공통 지문 영역"
+          }
           onApply={(bbox) => handleBBoxApply(editingIndex, bbox)}
           onRemove={() => handleBBoxRemove(editingIndex)}
           onCancel={() => setEditingIndex(null)}
@@ -1090,6 +1145,7 @@ function BBoxEditorModal({
   textBlocks,
   questionNumber,
   initialBBox,
+  title,
   onApply,
   onRemove,
   onCancel,
@@ -1098,6 +1154,7 @@ function BBoxEditorModal({
   textBlocks?: TextBlock[];
   questionNumber: number;
   initialBBox: BBox | null;
+  title?: string;
   onApply: (bbox: BBox) => void;
   onRemove: () => void;
   onCancel: () => void;
@@ -1105,6 +1162,7 @@ function BBoxEditorModal({
   const [bbox, setBbox] = useState<BBox>(
     initialBBox ?? computeDefaultBBox(questionNumber, textBlocks)
   );
+  const heading = title ?? "지문/그림 영역";
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/60 p-4 pt-8">
@@ -1112,7 +1170,7 @@ function BBoxEditorModal({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
           <h3 className="text-lg font-bold text-slate-900">
-            {questionNumber}번 문제 — 지문/그림 영역 수정
+            {questionNumber}번 문제 — {heading} 수정
           </h3>
           <button onClick={onCancel} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">닫기</button>
         </div>

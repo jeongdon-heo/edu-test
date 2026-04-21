@@ -39,6 +39,7 @@ const schema = i.schema({
       answer: i.string(),
       explanation: i.string(),
       materialImage: i.string().optional(),
+      questionImage: i.string().optional(),
       blankCount: i.number().optional(),
       subItems: i.json().optional(),
       requiresProcess: i.boolean().optional(),

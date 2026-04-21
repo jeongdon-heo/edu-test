@@ -519,9 +519,20 @@ export default function TakeTestPage({ params }: PageProps) {
                     </div>
                   )}
 
-                <p className="mb-5 text-2xl font-semibold leading-relaxed text-slate-800">
-                  {q.questionText}
-                </p>
+                {q.questionImage ? (
+                  <div className="mb-5 overflow-hidden rounded-2xl border-2 border-slate-200 bg-slate-50">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={q.questionImage}
+                      alt={`${q.questionNumber}번 문제`}
+                      className="block h-auto w-full max-w-full"
+                    />
+                  </div>
+                ) : (
+                  <p className="mb-5 text-2xl font-semibold leading-relaxed text-slate-800">
+                    {q.questionText}
+                  </p>
+                )}
 
                 {/* ── 다중 빈칸 ── */}
                 {q.type === "short_answer" && !requiresProcess && blankCount && blankCount >= 2 && !subItems && (
