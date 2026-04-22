@@ -44,6 +44,50 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
 
+/* BBox 최소 크기 — 0~1000 좌표계 기준. AI가 문항 번호만 감싸는 초소형 박스를
+   돌려주거나 좌표를 뒤집어 반환했을 때도, 교사 검수 모달에서는 최소 이 크기의
+   파란 박스가 열리도록 보강합니다. */
+const BBOX_MIN_WIDTH = 300;
+const BBOX_MIN_HEIGHT = 200;
+
+/** 좌표 정상화: [0,1000] 범위로 클램프하고, x/y가 뒤집혀 있으면 스왑합니다. */
+function normalizeBBox(bbox: BBox): BBox {
+  const [y1, x1, y2, x2] = bbox;
+  const cy1 = clamp(Math.round(Math.min(y1, y2)), 0, 1000);
+  const cy2 = clamp(Math.round(Math.max(y1, y2)), 0, 1000);
+  const cx1 = clamp(Math.round(Math.min(x1, x2)), 0, 1000);
+  const cx2 = clamp(Math.round(Math.max(x1, x2)), 0, 1000);
+  return [cy1, cx1, cy2, cx2];
+}
+
+/** 폭/높이가 최소치보다 작으면 중앙을 유지한 채 대칭으로 확장합니다. */
+function enforceMinBBoxSize(bbox: BBox): BBox {
+  const [y1, x1, y2, x2] = normalizeBBox(bbox);
+  const w = x2 - x1;
+  const h = y2 - y1;
+  let ny1 = y1, nx1 = x1, ny2 = y2, nx2 = x2;
+
+  if (w < BBOX_MIN_WIDTH) {
+    const cx = (x1 + x2) / 2;
+    const half = BBOX_MIN_WIDTH / 2;
+    nx1 = clamp(cx - half, 0, 1000 - BBOX_MIN_WIDTH);
+    nx2 = nx1 + BBOX_MIN_WIDTH;
+  }
+  if (h < BBOX_MIN_HEIGHT) {
+    const cy = (y1 + y2) / 2;
+    const half = BBOX_MIN_HEIGHT / 2;
+    ny1 = clamp(cy - half, 0, 1000 - BBOX_MIN_HEIGHT);
+    ny2 = ny1 + BBOX_MIN_HEIGHT;
+  }
+
+  return [
+    clamp(Math.round(ny1), 0, 1000),
+    clamp(Math.round(nx1), 0, 1000),
+    clamp(Math.round(ny2), 0, 1000),
+    clamp(Math.round(nx2), 0, 1000),
+  ];
+}
+
 const SNAP_THRESHOLD = 15; // 0~1000 단위, 이 거리 안이면 스냅
 
 function snapValue(value: number, targets: number[]): number {
@@ -974,7 +1018,10 @@ function BBoxSelector({
     tick((n) => n + 1);
   };
 
-  const [yMin, xMin, yMax, xMax] = bbox;
+  // 렌더 직전에도 [0,1000]으로 클램프하고 반전을 보정합니다. CSS 퍼센트는 이
+  // 좌표계에 비례하므로, 잘못된 입력이 들어와도 박스가 이미지 밖으로 나가거나
+  // 음수 폭으로 찌그러지지 않습니다.
+  const [yMin, xMin, yMax, xMax] = normalizeBBox(bbox);
   const active = dragRef.current !== null;
   const hasHints = textBlocks && textBlocks.length > 0;
 
@@ -1116,8 +1163,10 @@ function BBoxEditorModal({
   onRemove: () => void;
   onCancel: () => void;
 }) {
-  const [bbox, setBbox] = useState<BBox>(
-    initialBBox ?? computeDefaultBBox(questionNumber, textBlocks)
+  const [bbox, setBbox] = useState<BBox>(() =>
+    enforceMinBBoxSize(
+      initialBBox ?? computeDefaultBBox(questionNumber, textBlocks)
+    )
   );
   const heading = title ?? "지문/그림 영역";
 
