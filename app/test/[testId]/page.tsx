@@ -528,11 +528,11 @@ export default function TakeTestPage({ params }: PageProps) {
                       className="block h-auto w-full max-w-full"
                     />
                   </div>
-                ) : (
+                ) : q.questionText ? (
                   <p className="mb-5 text-2xl font-semibold leading-relaxed text-slate-800">
                     {q.questionText}
                   </p>
-                )}
+                ) : null}
 
                 {/* ── 다중 빈칸 ── */}
                 {q.type === "short_answer" && !requiresProcess && blankCount && blankCount >= 2 && !subItems && (
@@ -585,6 +585,7 @@ export default function TakeTestPage({ params }: PageProps) {
                 {/* ── 일반 객관식 ── */}
                 {q.type === "multiple_choice" && (
                   <ChoiceButtons
+                    optionsCount={resolveOptionsCount(q)}
                     options={Array.isArray(q.options) ? (q.options as string[]) : []}
                     value={typeof answers[q.id] === "string" ? (answers[q.id] as string) : ""}
                     onChange={(v) => setAnswer(q.id, v)}
@@ -594,6 +595,7 @@ export default function TakeTestPage({ params }: PageProps) {
                 {/* ── 복수 선택 ── */}
                 {q.type === "multi_select" && (
                   <MultiSelectButtons
+                    optionsCount={resolveOptionsCount(q)}
                     options={Array.isArray(q.options) ? (q.options as string[]) : []}
                     value={typeof answers[q.id] === "string" ? (answers[q.id] as string) : ""}
                     onChange={(v) => setAnswer(q.id, v)}
@@ -668,9 +670,22 @@ export default function TakeTestPage({ params }: PageProps) {
 
 const CIRCLE_CHARS = ["㉠", "㉡", "㉢", "㉣", "㉤", "㉥", "㉦", "㉧", "㉨", "㉩", "㉪", "㉫", "㉬", "㉭"];
 
-function needsCircleKeyboard(q: { questionText: string; answer: string; options?: unknown }): boolean {
-  const text = q.questionText + (q.answer ?? "");
+function needsCircleKeyboard(q: { questionText?: string | null; answer: string; options?: unknown }): boolean {
+  const text = (q.questionText ?? "") + (q.answer ?? "");
   return CIRCLE_CHARS.some((c) => text.includes(c));
+}
+
+/** New image-based tests use `optionsCount`. Legacy tests stored an `options`
+ *  array — fall back to its length so old data keeps rendering. */
+function resolveOptionsCount(q: {
+  optionsCount?: number | null;
+  options?: unknown;
+}): number {
+  if (typeof q.optionsCount === "number" && q.optionsCount > 0) {
+    return q.optionsCount;
+  }
+  if (Array.isArray(q.options)) return q.options.length;
+  return 0;
 }
 
 /* ── Sub-components ── */
@@ -1055,39 +1070,45 @@ function ProcessAnswerInput({
   );
 }
 
+const OMR_CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
+
+/** OMR-style single-choice bubble grid. The question image above carries all
+ *  the text; these buttons just capture the numbered selection. */
 function ChoiceButtons({
+  optionsCount,
   options,
   value,
   onChange,
 }: {
+  optionsCount: number;
   options: string[];
   value: string;
   onChange: (v: string) => void;
 }) {
+  if (optionsCount <= 0) return null;
+  const isLegacyTextMode = options.length === optionsCount;
+
   return (
-    <div className="flex flex-col gap-4">
-      {options.map((opt, idx) => {
-        const selected = value === opt;
+    <div className="flex flex-wrap items-center justify-center gap-4">
+      {Array.from({ length: optionsCount }, (_, idx) => {
+        const num = String(idx + 1);
+        // Legacy rows saved the full option text as the answer — keep that
+        // working by comparing against the same text.
+        const storeValue = isLegacyTextMode ? options[idx] : num;
+        const selected = value === storeValue;
         return (
           <button
-            key={`${opt}-${idx}`}
-            onClick={() => onChange(opt)}
-            className={`flex items-center gap-4 rounded-2xl border-4 px-5 py-5 text-left text-2xl font-medium transition active:scale-[0.98] ${
+            key={idx}
+            type="button"
+            aria-label={`${idx + 1}번 선택`}
+            onClick={() => onChange(storeValue)}
+            className={`flex h-20 w-20 flex-none items-center justify-center rounded-full border-4 text-4xl font-black transition active:scale-95 ${
               selected
-                ? "border-sky-500 bg-sky-100 text-sky-900"
-                : "border-slate-200 bg-white text-slate-700 hover:border-sky-300"
+                ? "border-sky-600 bg-sky-600 text-white shadow-lg"
+                : "border-slate-300 bg-white text-slate-500 hover:border-sky-400"
             }`}
           >
-            <span
-              className={`flex h-14 w-14 flex-none items-center justify-center rounded-full text-2xl font-bold ${
-                selected
-                  ? "bg-sky-600 text-white"
-                  : "bg-slate-100 text-slate-600"
-              }`}
-            >
-              {idx + 1}
-            </span>
-            <span className="flex-1">{opt}</span>
+            {OMR_CIRCLED[idx] ?? idx + 1}
           </button>
         );
       })}
@@ -1096,55 +1117,59 @@ function ChoiceButtons({
 }
 
 function MultiSelectButtons({
+  optionsCount,
   options,
   value,
   onChange,
 }: {
+  optionsCount: number;
   options: string[];
   value: string;
   onChange: (v: string) => void;
 }) {
-  const selected = new Set(
-    value
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-  );
-  const toggle = (opt: string) => {
+  if (optionsCount <= 0) return null;
+  const isLegacyTextMode = options.length === optionsCount;
+
+  const parts = value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const selected = new Set(parts);
+
+  const toggle = (storeValue: string) => {
     const next = new Set(selected);
-    next.has(opt) ? next.delete(opt) : next.add(opt);
+    if (next.has(storeValue)) next.delete(storeValue);
+    else next.add(storeValue);
     onChange(Array.from(next).join(","));
   };
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col items-center gap-3">
       <p className="text-base font-medium text-indigo-700">
         여러 개를 선택할 수 있어요
       </p>
-      {options.map((opt, idx) => {
-        const on = selected.has(opt);
-        return (
-          <button
-            key={`${opt}-${idx}`}
-            onClick={() => toggle(opt)}
-            className={`flex items-center gap-4 rounded-2xl border-4 px-5 py-5 text-left text-2xl font-medium transition active:scale-[0.98] ${
-              on
-                ? "border-indigo-500 bg-indigo-100 text-indigo-900"
-                : "border-slate-200 bg-white text-slate-700 hover:border-indigo-300"
-            }`}
-          >
-            <span
-              className={`flex h-14 w-14 flex-none items-center justify-center rounded-lg text-2xl font-bold ${
+      <div className="flex flex-wrap items-center justify-center gap-4">
+        {Array.from({ length: optionsCount }, (_, idx) => {
+          const num = String(idx + 1);
+          const storeValue = isLegacyTextMode ? options[idx] : num;
+          const on = selected.has(storeValue);
+          return (
+            <button
+              key={idx}
+              type="button"
+              aria-label={`${idx + 1}번 선택`}
+              onClick={() => toggle(storeValue)}
+              className={`flex h-20 w-20 flex-none items-center justify-center rounded-2xl border-4 text-4xl font-black transition active:scale-95 ${
                 on
-                  ? "bg-indigo-600 text-white"
-                  : "bg-slate-100 text-slate-600"
+                  ? "border-indigo-600 bg-indigo-600 text-white shadow-lg"
+                  : "border-slate-300 bg-white text-slate-500 hover:border-indigo-400"
               }`}
             >
-              {on ? "V" : idx + 1}
-            </span>
-            <span className="flex-1">{opt}</span>
-          </button>
-        );
-      })}
+              {OMR_CIRCLED[idx] ?? idx + 1}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

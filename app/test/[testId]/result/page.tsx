@@ -27,7 +27,7 @@ type StoredResult = {
 type StoredQuestion = {
   id: string;
   questionNumber: number;
-  questionText: string;
+  questionText?: string | null;
   type: string;
   answer?: string;
   requiresProcess?: boolean;

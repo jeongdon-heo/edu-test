@@ -23,7 +23,10 @@ type PageData = {
   rawText: string;
 };
 
-type EditableQuestion = ParsedQuestion & { pageIndex: number };
+type EditableQuestion = ParsedQuestion & {
+  pageIndex: number;
+  unit: string | null;
+};
 
 type Status =
   | "idle"
@@ -215,8 +218,7 @@ async function analyzePage(
   pageIndex: number,
   provider: string,
   apiKey: string,
-  answerKeyImages?: string[],
-  pageText?: string
+  answerKeyImages?: string[]
 ): Promise<ParsedQuestion[]> {
   const res = await fetch("/api/parse-pdf", {
     method: "POST",
@@ -231,7 +233,6 @@ async function analyzePage(
       ...(answerKeyImages && answerKeyImages.length > 0
         ? { answerKeyImages }
         : {}),
-      ...(pageText ? { pageText } : {}),
     }),
   });
   const json = await res.json();
@@ -273,19 +274,13 @@ async function saveToInstantDB(
       db.tx.questions[id()].update({
         test_id: testId,
         questionNumber: q.questionNumber,
-        questionText: q.questionText,
         type: q.type,
-        hasImage: q.hasImage,
-        options: q.options,
         answer: q.answer,
         explanation: q.explanation,
+        ...(q.optionsCount != null ? { optionsCount: q.optionsCount } : {}),
         ...(q.materialImage ? { materialImage: q.materialImage } : {}),
         ...(q.questionImage ? { questionImage: q.questionImage } : {}),
-        ...(q.blankCount ? { blankCount: q.blankCount } : {}),
-        ...(q.subItems ? { subItems: q.subItems } : {}),
-        ...(q.requiresProcess ? { requiresProcess: q.requiresProcess } : {}),
         ...(q.unit ? { unit: q.unit } : {}),
-        ...(q.rubric ? { rubric: q.rubric } : {}),
       })
     ),
   ];
@@ -411,10 +406,9 @@ export default function UploadPdfPage() {
           i,
           provider,
           apiKey,
-          answerKeyImgs.length > 0 ? answerKeyImgs : undefined,
-          page.rawText || undefined
+          answerKeyImgs.length > 0 ? answerKeyImgs : undefined
         );
-        acc.push(...pq.map((q) => ({ ...q, pageIndex: i })));
+        acc.push(...pq.map((q) => ({ ...q, pageIndex: i, unit: null })));
         setQuestions([...acc]);
         setProgress({ current: i + 1, total: pages.length });
       }
@@ -474,7 +468,6 @@ export default function UploadPdfPage() {
         updateQuestion(index, {
           materialImage: cropped,
           materialImageBBox: bbox,
-          hasImage: true,
         });
       }
     } catch {
@@ -509,7 +502,7 @@ export default function UploadPdfPage() {
       setQuestions((prev) =>
         prev.map((q, i) =>
           qIndices.includes(i)
-            ? { ...q, materialImage: cropped, materialImageBBox: bbox, hasImage: true }
+            ? { ...q, materialImage: cropped, materialImageBBox: bbox }
             : q
         )
       );
@@ -738,7 +731,11 @@ export default function UploadPdfPage() {
                     <div className="mb-3 flex flex-wrap items-center gap-2">
                       <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs font-semibold text-white">{q.questionNumber}번</span>
                       <TypeBadge type={q.type} />
-                      {q.hasImage && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">그림 포함</span>}
+                      {q.optionsCount != null && (
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                          보기 {q.optionsCount}개
+                        </span>
+                      )}
                       {editable && hasPage && (
                         <div className="ml-auto flex gap-2">
                           <button
@@ -763,101 +760,61 @@ export default function UploadPdfPage() {
                       )}
                     </div>
 
-                    {q.questionImage && (
-                      <div className="mb-3 overflow-hidden rounded-lg border-2 border-sky-200 bg-sky-50">
-                        <p className="bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-800">
-                          🧩 문항 고유 영역
-                        </p>
+                    {q.questionImage ? (
+                      <div className="mb-3 overflow-hidden rounded-lg border-2 border-sky-200 bg-white">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={q.questionImage} alt={`${q.questionNumber}번 문항 영역`} className="block w-full bg-white" />
+                        <img src={q.questionImage} alt={`${q.questionNumber}번 문항`} className="block w-full" />
+                      </div>
+                    ) : (
+                      <div className="mb-3 rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-xs text-slate-500">
+                        문항 이미지가 아직 잘리지 않았어요. 위의 [문항 영역 지정] 버튼으로 지정해 주세요.
                       </div>
                     )}
 
-                    <p className="mb-3 text-sm leading-relaxed text-slate-800">{q.questionText}</p>
-
-                    {q.options.length > 0 && (
-                      <ol className="mb-4 list-decimal space-y-1 pl-6 text-sm text-slate-700">
-                        {q.options.map((opt, i) => <li key={i}>{opt}</li>)}
-                      </ol>
-                    )}
-
                     <div className="space-y-3 rounded-lg bg-slate-50 p-4">
-                      {/* 다중 빈칸: 개별 정답 입력란 */}
-                      {q.blankCount && q.blankCount >= 2 ? (
-                        <div>
-                          <div className="mb-2 flex items-center gap-2">
-                            <span className="text-xs font-semibold text-slate-600">정답 (빈칸별)</span>
-                            <label className="ml-auto flex items-center gap-1">
-                              <span className="text-xs font-semibold text-slate-600">단위</span>
-                              <input type="text" value={q.unit ?? ""} readOnly={!editable} onChange={(e) => updateQuestion(idx, { unit: e.target.value || null })} placeholder="예: 년" className="w-16 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:border-sky-500 focus:outline-none read-only:bg-slate-100" />
-                            </label>
-                          </div>
-                          <div className="space-y-2">
-                            {(() => {
-                              const parts = q.answer.split(";;");
-                              while (parts.length < q.blankCount) parts.push("");
-                              return parts.slice(0, q.blankCount).map((part, pi) => (
-                                <div key={pi} className="flex items-center gap-2">
-                                  <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-slate-700 text-[10px] font-bold text-white">
-                                    {pi + 1}
-                                  </span>
-                                  <input
-                                    type="text"
-                                    value={part}
-                                    readOnly={!editable}
-                                    onChange={(e) => {
-                                      const next = [...parts];
-                                      next[pi] = e.target.value;
-                                      updateQuestion(idx, { answer: next.join(";;") });
-                                    }}
-                                    placeholder={`${pi + 1}번째 빈칸 정답`}
-                                    className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-sky-500 focus:outline-none read-only:bg-slate-100"
-                                  />
-                                </div>
-                              ));
-                            })()}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex gap-3">
-                          <label className="block flex-1">
-                            <span className="text-xs font-semibold text-slate-600">정답 (AI 채점)</span>
-                            <input type="text" value={q.answer} readOnly={!editable} onChange={(e) => updateQuestion(idx, { answer: e.target.value })} placeholder="정답" className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-sky-500 focus:outline-none read-only:bg-slate-100" />
-                          </label>
-                          <label className="block w-20">
-                            <span className="text-xs font-semibold text-slate-600">단위</span>
-                            <input type="text" value={q.unit ?? ""} readOnly={!editable} onChange={(e) => updateQuestion(idx, { unit: e.target.value || null })} placeholder="예: 년" className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-sky-500 focus:outline-none read-only:bg-slate-100" />
-                          </label>
-                        </div>
-                      )}
-                      {/* 서술형 루브릭 */}
-                      {q.requiresProcess && (
-                        <label className="block">
-                          <span className="text-xs font-semibold text-violet-700">모범 풀이 및 채점 기준 (루브릭)</span>
-                          <textarea
-                            value={q.rubric ?? q.explanation ?? ""}
+                      <div className="flex gap-3">
+                        <label className="block flex-1">
+                          <span className="text-xs font-semibold text-slate-600">정답</span>
+                          <input
+                            type="text"
+                            value={q.answer}
                             readOnly={!editable}
-                            onChange={(e) => updateQuestion(idx, { rubric: e.target.value })}
-                            placeholder={"예: 30만÷3만=10 식 포함 시 부분점수 부여\n모범 풀이 과정과 핵심 채점 기준을 작성하세요."}
-                            rows={4}
-                            className="mt-1 w-full resize-none rounded-md border-2 border-violet-200 bg-violet-50 px-3 py-2 text-sm text-slate-900 focus:border-violet-500 focus:outline-none read-only:bg-slate-100"
+                            onChange={(e) => updateQuestion(idx, { answer: e.target.value })}
+                            placeholder={
+                              q.type === "multiple_choice"
+                                ? "예: 3"
+                                : q.type === "multi_select"
+                                  ? "예: 1,3"
+                                  : q.type === "ox"
+                                    ? "O 또는 X"
+                                    : "정답"
+                            }
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-sky-500 focus:outline-none read-only:bg-slate-100"
                           />
                         </label>
-                      )}
+                        <label className="block w-24">
+                          <span className="text-xs font-semibold text-slate-600">단위</span>
+                          <input
+                            type="text"
+                            value={q.unit ?? ""}
+                            readOnly={!editable}
+                            onChange={(e) => updateQuestion(idx, { unit: e.target.value || null })}
+                            placeholder="예: 년"
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-sky-500 focus:outline-none read-only:bg-slate-100"
+                          />
+                        </label>
+                      </div>
                       <label className="block">
                         <span className="text-xs font-semibold text-slate-600">해설</span>
-                        <textarea value={q.explanation} readOnly={!editable} onChange={(e) => updateQuestion(idx, { explanation: e.target.value })} placeholder="해설" rows={2} className="mt-1 w-full resize-none rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-sky-500 focus:outline-none read-only:bg-slate-100" />
+                        <textarea
+                          value={q.explanation}
+                          readOnly={!editable}
+                          onChange={(e) => updateQuestion(idx, { explanation: e.target.value })}
+                          placeholder="해설"
+                          rows={2}
+                          className="mt-1 w-full resize-none rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-sky-500 focus:outline-none read-only:bg-slate-100"
+                        />
                       </label>
-                      {/* blankCount 조절 */}
-                      {(q.type === "short_answer") && editable && (
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs font-semibold text-slate-600">빈칸 개수</span>
-                          <button onClick={() => updateQuestion(idx, { blankCount: Math.max(0, (q.blankCount ?? 0) - 1) || null })} className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-bold text-slate-600 hover:bg-slate-100">−</button>
-                          <span className="w-6 text-center text-sm font-semibold text-slate-800">{q.blankCount ?? 0}</span>
-                          <button onClick={() => updateQuestion(idx, { blankCount: (q.blankCount ?? 0) + 1 })} className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-bold text-slate-600 hover:bg-slate-100">+</button>
-                          <span className="text-xs text-slate-400">(0~1이면 단일 입력, 2이상이면 다중 빈칸)</span>
-                        </div>
-                      )}
                     </div>
                   </li>
                 );

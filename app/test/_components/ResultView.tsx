@@ -20,7 +20,7 @@ export type SubmitResult = {
 type QuestionInput = {
   id: string;
   questionNumber: number;
-  questionText: string;
+  questionText?: string | null;
   type: string;
   answer?: string;
   requiresProcess?: boolean;
@@ -59,7 +59,7 @@ export function reconstructResult(params: {
       questionResults.push({
         questionId: q.id,
         questionNumber: q.questionNumber,
-        questionText: q.questionText,
+        questionText: q.questionText ?? "",
         type: q.type,
         correctAnswer: q.answer ?? "",
         studentAnswer,
@@ -79,7 +79,7 @@ export function reconstructResult(params: {
       questionResults.push({
         questionId: q.id,
         questionNumber: q.questionNumber,
-        questionText: q.questionText,
+        questionText: q.questionText ?? "",
         type: q.type,
         correctAnswer: q.answer ?? "",
         studentAnswer,
@@ -96,7 +96,7 @@ export function reconstructResult(params: {
       questionResults.push({
         questionId: q.id,
         questionNumber: q.questionNumber,
-        questionText: q.questionText,
+        questionText: q.questionText ?? "",
         type: q.type,
         correctAnswer: q.answer ?? "",
         studentAnswer,
@@ -109,7 +109,7 @@ export function reconstructResult(params: {
     questionResults.push({
       questionId: q.id,
       questionNumber: q.questionNumber,
-      questionText: q.questionText,
+      questionText: q.questionText ?? "",
       type: q.type,
       correctAnswer: q.answer ?? "",
       studentAnswer,

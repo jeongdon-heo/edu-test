@@ -158,7 +158,7 @@ export type GradeResult = {
 type QuestionInput = {
   id: string;
   questionNumber: number;
-  questionText: string;
+  questionText?: string | null;
   type: string;
   answer: string;
   blankCount?: number | null;
@@ -213,7 +213,7 @@ export function buildAIGradeItems(
       for (let i = 0; i < count; i++) {
         items.push({
           id: `${q.id}::${i}`,
-          questionText: q.subItems?.[i] ?? q.questionText,
+          questionText: q.subItems?.[i] ?? q.questionText ?? "",
           correctAnswer: parts[i] ?? "",
           studentAnswer: studentParts[i] ?? "",
         });
@@ -221,7 +221,7 @@ export function buildAIGradeItems(
     } else {
       items.push({
         id: q.id,
-        questionText: q.questionText,
+        questionText: q.questionText ?? "",
         correctAnswer,
         studentAnswer: typeof sa === "string" ? sa : "",
       });
@@ -264,7 +264,7 @@ export function buildPureEssayGradeItems(
 
     items.push({
       id: q.id,
-      questionText: q.questionText,
+      questionText: q.questionText ?? "",
       modelAnswer: q.answer ?? "",
       explanation: q.explanation ?? "",
       rubric: q.rubric ?? "",
@@ -314,7 +314,7 @@ export function buildEssayGradeItems(
 
     items.push({
       id: q.id,
-      questionText: q.questionText,
+      questionText: q.questionText ?? "",
       correctAnswer: q.answer ?? "",
       process,
       answer,
@@ -360,7 +360,7 @@ export function gradeSubmission(
         questionResults.push({
           questionId: q.id,
           questionNumber: q.questionNumber,
-          questionText: q.questionText,
+          questionText: q.questionText ?? "",
           type: q.type,
           correctAnswer: q.answer ?? "",
           studentAnswer: formatStudentAnswer(studentAnswer, q),
@@ -376,7 +376,7 @@ export function gradeSubmission(
       questionResults.push({
         questionId: q.id,
         questionNumber: q.questionNumber,
-        questionText: q.questionText,
+        questionText: q.questionText ?? "",
         type: q.type,
         correctAnswer: q.answer ?? "",
         studentAnswer: formatStudentAnswer(studentAnswer, q),
@@ -397,7 +397,7 @@ export function gradeSubmission(
         questionResults.push({
           questionId: q.id,
           questionNumber: q.questionNumber,
-          questionText: q.questionText,
+          questionText: q.questionText ?? "",
           type: q.type,
           correctAnswer: q.answer ?? "",
           studentAnswer: formatStudentAnswer(studentAnswer, q),
@@ -415,7 +415,7 @@ export function gradeSubmission(
       questionResults.push({
         questionId: q.id,
         questionNumber: q.questionNumber,
-        questionText: q.questionText,
+        questionText: q.questionText ?? "",
         type: q.type,
         correctAnswer: q.answer ?? "",
         studentAnswer: formatStudentAnswer(studentAnswer, q),
@@ -460,7 +460,7 @@ export function gradeSubmission(
     questionResults.push({
       questionId: q.id,
       questionNumber: q.questionNumber,
-      questionText: q.questionText,
+      questionText: q.questionText ?? "",
       type: q.type,
       correctAnswer: q.answer ?? "",
       studentAnswer: formatStudentAnswer(studentAnswer, q),
