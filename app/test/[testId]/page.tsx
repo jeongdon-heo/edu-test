@@ -10,6 +10,7 @@ import {
   buildAIGradeItems,
   buildEssayGradeItems,
   buildPureEssayGradeItems,
+  inferAnswerPartCount,
   type AnswerValue,
   type PureEssayGrade,
   type RubricGrade,
@@ -482,11 +483,15 @@ export default function TakeTestPage({ params }: PageProps) {
 
         <ol ref={questionListRef} className="space-y-5">
           {questions.map((q, qIdx) => {
-            const blankCount = (q.blankCount as number | undefined) ?? null;
             const subItems = (q.subItems as string[] | undefined) ?? null;
             const requiresProcess = (q.requiresProcess as boolean | undefined) ?? false;
             const unit = (q.unit as string | undefined) ?? null;
             const showCircleKb = needsCircleKeyboard(q);
+            const hasSubItems = !!(subItems && subItems.length > 0);
+            // Count of answer parts — drives whether we render a multi-input.
+            // The hasSubItems branch has its own rendering, so the multi-input
+            // branch gates on !hasSubItems below.
+            const blanks = inferAnswerPartCount(q);
 
             return (
               <li
@@ -534,34 +539,34 @@ export default function TakeTestPage({ params }: PageProps) {
                   </p>
                 ) : null}
 
-                {/* ── 다중 빈칸 ── */}
-                {q.type === "short_answer" && !requiresProcess && blankCount && blankCount >= 2 && !subItems && (
+                {/* ── 다중 빈칸 / 다중 정답 ── */}
+                {q.type === "short_answer" && !requiresProcess && !hasSubItems && blanks >= 2 && (
                   <MultiBlankInput
-                    count={blankCount}
+                    count={blanks}
                     unit={unit}
                     value={
                       Array.isArray(answers[q.id])
                         ? (answers[q.id] as string[])
-                        : Array(blankCount).fill("")
+                        : Array(blanks).fill("")
                     }
                     onChange={(idx, val) =>
-                      setBlankAnswer(q.id, idx, val, blankCount)
+                      setBlankAnswer(q.id, idx, val, blanks)
                     }
                   />
                 )}
 
                 {/* ── 소문항 ── */}
-                {q.type === "short_answer" && !requiresProcess && subItems && subItems.length > 0 && (
+                {q.type === "short_answer" && !requiresProcess && hasSubItems && (
                   <SubItemsInput
-                    subItems={subItems}
+                    subItems={subItems!}
                     unit={unit}
                     value={
                       Array.isArray(answers[q.id])
                         ? (answers[q.id] as string[])
-                        : Array(subItems.length).fill("")
+                        : Array(subItems!.length).fill("")
                     }
                     onChange={(idx, val) =>
-                      setSubItemAnswer(q.id, idx, val, subItems.length)
+                      setSubItemAnswer(q.id, idx, val, subItems!.length)
                     }
                   />
                 )}
@@ -613,8 +618,8 @@ export default function TakeTestPage({ params }: PageProps) {
                 {/* ── 일반 단답형 (빈칸 1개, 소문항 없음, requiresProcess 아닌 경우) ── */}
                 {q.type === "short_answer" &&
                   !requiresProcess &&
-                  (!blankCount || blankCount < 2) &&
-                  (!subItems || subItems.length === 0) && (
+                  !hasSubItems &&
+                  blanks < 2 && (
                     <ShortAnswerInput
                       value={typeof answers[q.id] === "string" ? (answers[q.id] as string) : ""}
                       onChange={(v) => setAnswer(q.id, v)}
@@ -625,25 +630,10 @@ export default function TakeTestPage({ params }: PageProps) {
 
                 {/* ── 일반 서술형 (requiresProcess 아닌 경우) ── */}
                 {q.type === "essay" && !requiresProcess && (
-                  <div>
-                    <SpecialSymbolToolbar
-                      className="mb-2"
-                      onAppend={(ch) => {
-                        const current =
-                          typeof answers[q.id] === "string"
-                            ? (answers[q.id] as string)
-                            : "";
-                        setAnswer(q.id, current + ch);
-                      }}
-                    />
-                    <textarea
-                      value={typeof answers[q.id] === "string" ? (answers[q.id] as string) : ""}
-                      onChange={(e) => setAnswer(q.id, e.target.value)}
-                      placeholder="생각을 자유롭게 적어보세요"
-                      rows={5}
-                      className="w-full resize-none rounded-2xl border-4 border-slate-200 px-6 py-5 text-xl leading-relaxed text-slate-900 focus:border-sky-500 focus:outline-none"
-                    />
-                  </div>
+                  <EssayInput
+                    value={typeof answers[q.id] === "string" ? (answers[q.id] as string) : ""}
+                    onChange={(v) => setAnswer(q.id, v)}
+                  />
                 )}
               </li>
             );
@@ -687,6 +677,7 @@ function resolveOptionsCount(q: {
   if (Array.isArray(q.options)) return q.options.length;
   return 0;
 }
+
 
 /* ── Sub-components ── */
 
@@ -786,7 +777,7 @@ function CircleCharToolbar({ onInsert }: { onInsert: (ch: string) => void }) {
 }
 
 /* ── 특수기호 간편 입력 툴바 ── */
-const SPECIAL_SYMBOLS = ["○", "×", "①", "②", "③", "④", "⑤"];
+const SPECIAL_SYMBOLS = ["○", "×", "°", "①", "②", "③", "④", "⑤"];
 
 function SpecialSymbolToolbar({
   onAppend,
@@ -846,10 +837,7 @@ function ShortAnswerInput({
   return (
     <div>
       {showCircleKeyboard && <CircleCharToolbar onInsert={insertChar} />}
-      <SpecialSymbolToolbar
-        className="mb-2"
-        onAppend={(ch) => onChange(value + ch)}
-      />
+      <SpecialSymbolToolbar className="mb-2" onAppend={insertChar} />
       <div className="flex items-center gap-3">
         <input
           ref={inputRef}
@@ -869,9 +857,45 @@ function ShortAnswerInput({
   );
 }
 
-/* ── 다중 빈칸 입력 ── */
-const CIRCLED_NUMS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
+/* ── 일반 서술형 입력 (커서 위치 삽입 지원) ── */
+function EssayInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const taRef = useRef<HTMLTextAreaElement>(null);
 
+  const insertChar = (ch: string) => {
+    const ta = taRef.current;
+    if (!ta) { onChange(value + ch); return; }
+    const start = ta.selectionStart ?? value.length;
+    const end = ta.selectionEnd ?? value.length;
+    const next = value.substring(0, start) + ch + value.substring(end);
+    onChange(next);
+    requestAnimationFrame(() => {
+      ta.selectionStart = ta.selectionEnd = start + ch.length;
+      ta.focus();
+    });
+  };
+
+  return (
+    <div>
+      <SpecialSymbolToolbar className="mb-2" onAppend={insertChar} />
+      <textarea
+        ref={taRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="생각을 자유롭게 적어보세요"
+        rows={5}
+        className="w-full resize-none rounded-2xl border-4 border-slate-200 px-6 py-5 text-xl leading-relaxed text-slate-900 focus:border-sky-500 focus:outline-none"
+      />
+    </div>
+  );
+}
+
+/* ── 다중 빈칸 / 다중 정답 입력 ── */
 function MultiBlankInput({
   count,
   value,
@@ -883,41 +907,62 @@ function MultiBlankInput({
   onChange: (index: number, val: string) => void;
   unit?: string | null;
 }) {
+  const inputsRef = useRef<Array<HTMLInputElement | null>>([]);
   const [focused, setFocused] = useState(0);
-  const appendToFocused = (ch: string) => {
+
+  const insertIntoFocused = (ch: string) => {
     const idx = Math.min(focused, count - 1);
+    const el = inputsRef.current[idx];
     const current = value[idx] ?? "";
-    onChange(idx, current + ch);
+    if (!el) {
+      onChange(idx, current + ch);
+      return;
+    }
+    const start = el.selectionStart ?? current.length;
+    const end = el.selectionEnd ?? current.length;
+    const next = current.substring(0, start) + ch + current.substring(end);
+    onChange(idx, next);
+    requestAnimationFrame(() => {
+      el.selectionStart = el.selectionEnd = start + ch.length;
+      el.focus();
+    });
   };
+
   return (
     <div>
       <p className="mb-3 rounded-lg bg-sky-50 px-4 py-2.5 text-sm font-bold text-sky-700">
         ※ 위에서 아래로, 왼쪽에서 오른쪽 순서대로 빈칸을 채워주세요.
       </p>
-      <SpecialSymbolToolbar className="mb-3" onAppend={appendToFocused} />
+      <SpecialSymbolToolbar className="mb-3" onAppend={insertIntoFocused} />
       <div className="space-y-3">
-        {Array.from({ length: count }).map((_, i) => (
-          <div key={i} className="flex items-center gap-3">
-            <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-sky-600 text-lg font-bold text-white">
-              {CIRCLED_NUMS[i] ?? i + 1}
-            </span>
-            <div className="flex flex-1 items-center gap-2">
-              <input
-                type="text"
-                value={value[i] ?? ""}
-                onChange={(e) => onChange(i, e.target.value)}
-                onFocus={() => setFocused(i)}
-                placeholder={`${CIRCLED_NUMS[i] ?? i + 1}번째 빈칸`}
-                className="min-w-0 flex-1 rounded-xl border-4 border-slate-200 px-4 py-4 text-center text-2xl font-medium text-slate-900 focus:border-sky-500 focus:outline-none"
-              />
-              {unit && i === count - 1 && (
-                <span className="flex-none text-2xl font-bold text-slate-500">
-                  {unit}
-                </span>
-              )}
+        {Array.from({ length: count }).map((_, i) => {
+          const label = `(${i + 1})`;
+          return (
+            <div key={i} className="flex items-center gap-3">
+              <span className="flex h-10 min-w-[3rem] flex-none items-center justify-center rounded-full bg-sky-600 px-3 text-lg font-bold text-white">
+                {label}
+              </span>
+              <div className="flex flex-1 items-center gap-2">
+                <input
+                  ref={(el) => {
+                    inputsRef.current[i] = el;
+                  }}
+                  type="text"
+                  value={value[i] ?? ""}
+                  onChange={(e) => onChange(i, e.target.value)}
+                  onFocus={() => setFocused(i)}
+                  placeholder={`${label} 답`}
+                  className="min-w-0 flex-1 rounded-xl border-4 border-slate-200 px-4 py-4 text-center text-2xl font-medium text-slate-900 focus:border-sky-500 focus:outline-none"
+                />
+                {unit && i === count - 1 && (
+                  <span className="flex-none text-2xl font-bold text-slate-500">
+                    {unit}
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -935,21 +980,39 @@ function SubItemsInput({
   onChange: (index: number, val: string) => void;
   unit?: string | null;
 }) {
+  const inputsRef = useRef<Array<HTMLInputElement | null>>([]);
   const [focused, setFocused] = useState(0);
-  const appendToFocused = (ch: string) => {
+
+  const insertIntoFocused = (ch: string) => {
     const idx = Math.min(focused, subItems.length - 1);
+    const el = inputsRef.current[idx];
     const current = value[idx] ?? "";
-    onChange(idx, current + ch);
+    if (!el) {
+      onChange(idx, current + ch);
+      return;
+    }
+    const start = el.selectionStart ?? current.length;
+    const end = el.selectionEnd ?? current.length;
+    const next = current.substring(0, start) + ch + current.substring(end);
+    onChange(idx, next);
+    requestAnimationFrame(() => {
+      el.selectionStart = el.selectionEnd = start + ch.length;
+      el.focus();
+    });
   };
+
   return (
     <div>
-      <SpecialSymbolToolbar className="mb-3" onAppend={appendToFocused} />
+      <SpecialSymbolToolbar className="mb-3" onAppend={insertIntoFocused} />
       <div className="space-y-4">
         {subItems.map((label, i) => (
           <div key={i}>
             <p className="mb-2 text-lg font-semibold text-slate-700">{label}</p>
             <div className="flex items-center gap-3">
               <input
+                ref={(el) => {
+                  inputsRef.current[i] = el;
+                }}
                 type="text"
                 value={value[i] ?? ""}
                 onChange={(e) => onChange(i, e.target.value)}
@@ -991,6 +1054,7 @@ function ProcessAnswerInput({
   unit?: string | null;
 }) {
   const processRef = useRef<HTMLTextAreaElement>(null);
+  const answerRef = useRef<HTMLInputElement>(null);
 
   const insertSymbol = (symbol: string) => {
     const ta = processRef.current;
@@ -1005,6 +1069,22 @@ function ProcessAnswerInput({
     requestAnimationFrame(() => {
       ta.selectionStart = ta.selectionEnd = start + symbol.length;
       ta.focus();
+    });
+  };
+
+  const insertIntoAnswer = (ch: string) => {
+    const el = answerRef.current;
+    if (!el) {
+      onChangeAnswer(value.answer + ch);
+      return;
+    }
+    const start = el.selectionStart ?? value.answer.length;
+    const end = el.selectionEnd ?? value.answer.length;
+    const next = value.answer.substring(0, start) + ch + value.answer.substring(end);
+    onChangeAnswer(next);
+    requestAnimationFrame(() => {
+      el.selectionStart = el.selectionEnd = start + ch.length;
+      el.focus();
     });
   };
 
@@ -1028,10 +1108,7 @@ function ProcessAnswerInput({
             </button>
           ))}
         </div>
-        <SpecialSymbolToolbar
-          className="mb-2"
-          onAppend={(ch) => onChangeProcess(value.process + ch)}
-        />
+        <SpecialSymbolToolbar className="mb-2" onAppend={insertSymbol} />
         <textarea
           ref={processRef}
           value={value.process}
@@ -1047,12 +1124,10 @@ function ProcessAnswerInput({
         <label className="mb-2 block text-base font-bold text-sky-700">
           답
         </label>
-        <SpecialSymbolToolbar
-          className="mb-2"
-          onAppend={(ch) => onChangeAnswer(value.answer + ch)}
-        />
+        <SpecialSymbolToolbar className="mb-2" onAppend={insertIntoAnswer} />
         <div className="flex items-center gap-3">
           <input
+            ref={answerRef}
             type="text"
             value={value.answer}
             onChange={(e) => onChangeAnswer(e.target.value)}

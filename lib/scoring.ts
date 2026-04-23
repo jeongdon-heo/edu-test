@@ -44,6 +44,23 @@ export function isMultiSelectCorrect(
   return true;
 }
 
+/** How many answer parts a short-answer question expects. subItems/blankCount
+ *  take precedence; otherwise fall back to counting ';;'-joined segments of
+ *  the answer. Shared by the student input UI and the grader so both sides
+ *  agree on the shape of the answer array. */
+export function inferAnswerPartCount(q: {
+  answer?: string | null;
+  blankCount?: number | null;
+  subItems?: unknown;
+}): number {
+  if (Array.isArray(q.subItems) && (q.subItems as unknown[]).length > 0) {
+    return (q.subItems as unknown[]).length;
+  }
+  if (typeof q.blankCount === "number" && q.blankCount >= 2) return q.blankCount;
+  const parts = (q.answer ?? "").split(";;").filter((s) => s.length > 0);
+  return parts.length >= 2 ? parts.length : 1;
+}
+
 export function isRubricGrade(v: unknown): v is RubricGrade {
   return (
     v !== null &&
@@ -81,10 +98,12 @@ export function checkAnswer(
     return isCorrect(ans, correctAnswer);
   }
 
-  if (
-    (q.blankCount && q.blankCount > 1) ||
-    (q.subItems && q.subItems.length > 0)
-  ) {
+  const partCount = inferAnswerPartCount({
+    answer: correctAnswer,
+    blankCount: q.blankCount,
+    subItems: q.subItems,
+  });
+  if (partCount >= 2) {
     const parts = correctAnswer.split(";;");
     const studentParts = Array.isArray(studentAnswer)
       ? studentAnswer
@@ -203,14 +222,11 @@ export function buildAIGradeItems(
     const sa = answers[q.id];
     const correctAnswer = q.answer ?? "";
 
-    if (
-      (q.blankCount && q.blankCount >= 2) ||
-      (q.subItems && q.subItems.length > 0)
-    ) {
+    const partCount = inferAnswerPartCount(q);
+    if (partCount >= 2) {
       const parts = correctAnswer.split(";;");
       const studentParts = Array.isArray(sa) ? sa : [];
-      const count = q.subItems?.length ?? q.blankCount ?? parts.length;
-      for (let i = 0; i < count; i++) {
+      for (let i = 0; i < partCount; i++) {
         items.push({
           id: `${q.id}::${i}`,
           questionText: q.subItems?.[i] ?? q.questionText ?? "",
@@ -431,18 +447,15 @@ export function gradeSubmission(
     let qCorrect: boolean;
     let partialScore: number | undefined;
 
-    if (
-      useAI &&
-      ((q.blankCount && q.blankCount >= 2) ||
-        (q.subItems && q.subItems.length > 0))
-    ) {
-      const count = q.subItems?.length ?? q.blankCount ?? 1;
+    const partCount =
+      q.type === "short_answer" ? inferAnswerPartCount(q) : 1;
+    if (useAI && partCount >= 2) {
       let correctParts = 0;
-      for (let i = 0; i < count; i++) {
+      for (let i = 0; i < partCount; i++) {
         if (aiResults!.get(`${q.id}::${i}`)) correctParts++;
       }
-      partialScore = correctParts / count;
-      qCorrect = correctParts === count;
+      partialScore = correctParts / partCount;
+      qCorrect = correctParts === partCount;
     } else if (useAI) {
       qCorrect = aiResults!.get(q.id) ?? false;
     } else {
